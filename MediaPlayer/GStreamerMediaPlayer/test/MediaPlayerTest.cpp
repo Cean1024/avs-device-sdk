@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -101,44 +101,52 @@ static std::unordered_map<std::string, std::string> urlsToContent;
 /// A mock content fetcher
 class MockContentFetcher : public avsCommon::sdkInterfaces::HTTPContentFetcherInterface {
 public:
-    MockContentFetcher(const std::string& url) : m_url{url} {
+    MockContentFetcher(const std::string& url) : m_url{url}, m_state{HTTPContentFetcherInterface::State::INITIALIZED} {
+    }
+
+    std::string getUrl() const override {
+        return m_url;
+    }
+
+    HTTPContentFetcherInterface::Header getHeader(std::atomic<bool>* shouldShutdown) override {
+        HTTPContentFetcherInterface::Header header;
+        auto urlAndContentType = urlsToContentTypes.find(m_url);
+        if (urlAndContentType == urlsToContentTypes.end()) {
+            header.successful = false;
+        } else {
+            header.successful = true;
+            header.responseCode = avsCommon::utils::http::HTTPResponseCode::SUCCESS_OK;
+            header.contentType = urlAndContentType->second;
+            m_state = HTTPContentFetcherInterface::State::HEADER_DONE;
+        }
+        return header;
+    }
+
+    HTTPContentFetcherInterface::State getState() override {
+        return m_state;
+    }
+
+    bool getBody(std::shared_ptr<avsCommon::avs::attachment::AttachmentWriter> writer) override {
+        auto urlAndContent = urlsToContent.find(m_url);
+        if (urlAndContent == urlsToContent.end()) {
+            return false;
+        }
+        auto attachment = writeStringIntoAttachment(urlAndContent->second, std::move(writer));
+        if (!attachment) {
+            return false;
+        }
+        m_state = HTTPContentFetcherInterface::State::BODY_DONE;
+        return true;
+    }
+
+    void shutdown() override {
     }
 
     std::unique_ptr<avsCommon::utils::HTTPContent> getContent(
         FetchOptions fetchOption,
-        std::shared_ptr<avsCommon::avs::attachment::AttachmentWriter> writer) override {
-        if (fetchOption == FetchOptions::CONTENT_TYPE) {
-            auto urlAndContentType = urlsToContentTypes.find(m_url);
-            if (urlAndContentType == urlsToContentTypes.end()) {
-                return nullptr;
-            } else {
-                std::promise<long> statusPromise;
-                auto statusFuture = statusPromise.get_future();
-                statusPromise.set_value(200);
-                std::promise<std::string> contentTypePromise;
-                auto contentTypeFuture = contentTypePromise.get_future();
-                contentTypePromise.set_value(urlAndContentType->second);
-                return avsCommon::utils::memory::make_unique<avsCommon::utils::HTTPContent>(
-                    std::move(statusFuture), std::move(contentTypeFuture), nullptr);
-            }
-        } else {
-            auto urlAndContent = urlsToContent.find(m_url);
-            if (urlAndContent == urlsToContent.end()) {
-                return nullptr;
-            }
-            std::promise<long> statusPromise;
-            auto statusFuture = statusPromise.get_future();
-            statusPromise.set_value(200);
-            std::promise<std::string> contentTypePromise;
-            auto contentTypeFuture = contentTypePromise.get_future();
-            contentTypePromise.set_value("");
-            auto attachment = writeStringIntoAttachment(urlAndContent->second, writer);
-            if (!attachment) {
-                return nullptr;
-            }
-            return avsCommon::utils::memory::make_unique<avsCommon::utils::HTTPContent>(
-                std::move(statusFuture), std::move(contentTypeFuture), attachment);
-        }
+        std::unique_ptr<avsCommon::avs::attachment::AttachmentWriter> writer,
+        const std::vector<std::string>& customHeaders = std::vector<std::string>()) override {
+        return nullptr;
     }
 
 private:
@@ -161,6 +169,8 @@ private:
     };
 
     std::string m_url;
+
+    HTTPContentFetcherInterface::State m_state;
 };
 
 /// A mock factory that creates mock content fetchers
@@ -592,7 +602,7 @@ bool MockPlayerObserver::waitForTags(SourceId id, const std::chrono::millisecond
     return true;
 }
 
-class MediaPlayerTest : public ::testing::Test {
+class MediaPlayerTest : public ::testing::TestWithParam<bool> {
 public:
     void SetUp() override;
 
@@ -623,6 +633,8 @@ public:
     std::shared_ptr<MockPlayerObserver> m_playerObserver;
 };
 
+INSTANTIATE_TEST_CASE_P(Parameterized, MediaPlayerTest, ::testing::Bool());
+
 void MediaPlayerTest::SetUp() {
 // ACSDK-1373 - MediaPlayerTest fail on Windows
 // with GStreamer 1.14 default audio sink.
@@ -631,7 +643,14 @@ void MediaPlayerTest::SetUp() {
     initialization::AlexaClientSDKInit::initialize({inString});
 #endif
     m_playerObserver = std::make_shared<MockPlayerObserver>();
-    m_mediaPlayer = MediaPlayer::create(std::make_shared<MockContentFetcherFactory>());
+
+    // All the tests will be run with enableLiveMode set to true and false respectively
+    m_mediaPlayer = MediaPlayer::create(
+        std::make_shared<MockContentFetcherFactory>(),
+        false,
+        avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_SPEAKER_VOLUME,
+        "",
+        GetParam());
     ASSERT_TRUE(m_mediaPlayer);
     m_mediaPlayer->setObserver(m_playerObserver);
 }
@@ -661,7 +680,7 @@ void MediaPlayerTest::setIStreamSource(MediaPlayer::SourceId* id, bool repeat) {
  * Read an audio file into a buffer. Set the source of the @c MediaPlayer to the buffer. Playback audio till the end.
  * Check whether the playback started and playback finished notifications are received.
  */
-TEST_F(MediaPlayerTest, testStartPlayWaitForEnd) {
+TEST_P(MediaPlayerTest, testSlow_startPlayWaitForEnd) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -674,7 +693,7 @@ TEST_F(MediaPlayerTest, testStartPlayWaitForEnd) {
  * Set the source of the @c MediaPlayer to a url representing a single audio file. Playback audio till the end.
  * Check whether the playback started and playback finished notifications are received.
  */
-TEST_F(MediaPlayerTest, testStartPlayForUrl) {
+TEST_P(MediaPlayerTest, testSlow_startPlayForUrl) {
     std::string url_single(FILE_PREFIX + inputsDirPath + MP3_FILE_PATH);
     auto sourceId = m_mediaPlayer->setSource(url_single);
     ASSERT_NE(ERROR_SOURCE_ID, sourceId);
@@ -690,7 +709,7 @@ TEST_F(MediaPlayerTest, testStartPlayForUrl) {
  *
  * Consecutive calls to setSource(const std::string url) without play() cause tests to occasionally fail: ACSDK-508.
  */
-TEST_F(MediaPlayerTest, testConsecutiveSetSource) {
+TEST_P(MediaPlayerTest, testSlow_consecutiveSetSource) {
     std::string url_single(FILE_PREFIX + inputsDirPath + MP3_FILE_PATH);
     m_mediaPlayer->setSource("");
     auto id = m_mediaPlayer->setSource(url_single);
@@ -702,7 +721,7 @@ TEST_F(MediaPlayerTest, testConsecutiveSetSource) {
 /**
  * Plays a second different type of source after one source has finished playing.
  */
-TEST_F(MediaPlayerTest, testStartPlayWaitForEndStartPlayAgain) {
+TEST_P(MediaPlayerTest, testSlow_startPlayWaitForEndStartPlayAgain) {
     MediaPlayer::SourceId sourceId;
     setIStreamSource(&sourceId);
 
@@ -721,7 +740,7 @@ TEST_F(MediaPlayerTest, testStartPlayWaitForEndStartPlayAgain) {
  * seconds. Playback started notification should be received when the playback starts. Then call @c stop and expect
  * the playback finished notification is received.
  */
-TEST_F(MediaPlayerTest, testStopPlay) {
+TEST_P(MediaPlayerTest, testSlow_stopPlay) {
     MediaPlayer::SourceId sourceId;
     setIStreamSource(&sourceId, true);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -736,7 +755,7 @@ TEST_F(MediaPlayerTest, testStopPlay) {
  * seconds. Playback started notification should be received when the playback starts. Then call @c stop and expect
  * the playback finished notification is received.
  */
-TEST_F(MediaPlayerTest, testStartPlayCallAfterStopPlay) {
+TEST_P(MediaPlayerTest, testSlow_startPlayCallAfterStopPlay) {
     MediaPlayer::SourceId sourceId;
     setIStreamSource(&sourceId, true);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -752,7 +771,7 @@ TEST_F(MediaPlayerTest, testStartPlayCallAfterStopPlay) {
  * seconds. Playback started notification should be received when the playback starts. Call @c stop.
  * and wait for the playback finished notification is received. Call @c play again.
  */
-TEST_F(MediaPlayerTest, testStartPlayCallAfterStopPlayDifferentSource) {
+TEST_P(MediaPlayerTest, testSlow_startPlayCallAfterStopPlayDifferentSource) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -772,7 +791,7 @@ TEST_F(MediaPlayerTest, testStartPlayCallAfterStopPlayDifferentSource) {
 /*
  * Pause an audio after playback has started.
  */
-TEST_F(MediaPlayerTest, testPauseDuringPlay) {
+TEST_P(MediaPlayerTest, testSlow_pauseDuringPlay) {
     MediaPlayer::SourceId sourceId;
     setIStreamSource(&sourceId, true);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -786,7 +805,7 @@ TEST_F(MediaPlayerTest, testPauseDuringPlay) {
 /*
  * Resume paused audio.
  */
-TEST_F(MediaPlayerTest, testResumeAfterPauseThenStop) {
+TEST_P(MediaPlayerTest, testSlow_resumeAfterPauseThenStop) {
     MediaPlayer::SourceId sourceId;
     setIStreamSource(&sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -802,7 +821,7 @@ TEST_F(MediaPlayerTest, testResumeAfterPauseThenStop) {
  * Stop of a paused audio after playback has started. An additional stop event should
  * be sent.
  */
-TEST_F(MediaPlayerTest, testStopAfterPause) {
+TEST_P(MediaPlayerTest, testSlow_stopAfterPause) {
     MediaPlayer::SourceId sourceId;
     setIStreamSource(&sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -817,7 +836,7 @@ TEST_F(MediaPlayerTest, testStopAfterPause) {
 /*
  * Pause of a paused audio after playback has started. The pause() should fail.
  */
-TEST_F(MediaPlayerTest, testPauseAfterPause) {
+TEST_P(MediaPlayerTest, testSlow_pauseAfterPause) {
     MediaPlayer::SourceId sourceId;
     setIStreamSource(&sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -832,7 +851,7 @@ TEST_F(MediaPlayerTest, testPauseAfterPause) {
 /*
  * Calling resume after playback has started. The resume operation should fail.
  */
-TEST_F(MediaPlayerTest, testResumeAfterPlay) {
+TEST_P(MediaPlayerTest, test_resumeAfterPlay) {
     MediaPlayer::SourceId sourceId;
     setIStreamSource(&sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -848,7 +867,7 @@ TEST_F(MediaPlayerTest, testResumeAfterPlay) {
  * Check the offset value. Then call @c stop and expect the playback finished notification is received.
  * Call @c getOffset again. Check the offset value.
  */
-TEST_F(MediaPlayerTest, testGetOffsetInMilliseconds) {
+TEST_P(MediaPlayerTest, testTimer_getOffsetInMilliseconds) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -866,14 +885,14 @@ TEST_F(MediaPlayerTest, testGetOffsetInMilliseconds) {
  * Test getOffset with a null pipeline. Expect that MEDIA_PLAYER_INVALID_OFFSET is returned.
  * This currently results in errors on shutdown. Will be fixed by ACSDK-446.
  */
-TEST_F(MediaPlayerTest, testGetOffsetInMillisecondsNullPipeline) {
+TEST_P(MediaPlayerTest, test_getOffsetInMillisecondsNullPipeline) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
     ASSERT_EQ(MEDIA_PLAYER_INVALID_OFFSET, m_mediaPlayer->getOffset(sourceId + 1));
 }
 
 /// Tests that calls to getOffset fail when the pipeline is in a stopped state.
-TEST_F(MediaPlayerTest, testGetOffsetWhenStoppedFails) {
+TEST_P(MediaPlayerTest, testSlow_getOffsetWhenStoppedFails) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -887,7 +906,7 @@ TEST_F(MediaPlayerTest, testGetOffsetWhenStoppedFails) {
 }
 
 /// Tests that calls to getOffset succeed when the pipeline is in a paused state.
-TEST_F(MediaPlayerTest, testGetOffsetWhenPaused) {
+TEST_P(MediaPlayerTest, testSlow_getOffsetWhenPaused) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -909,7 +928,7 @@ TEST_F(MediaPlayerTest, testGetOffsetWhenPaused) {
 //  * Check the offset value. Wait for playback to finish and expect the playback finished notification is received.
 //  * Repeat the above for a new source.
 //  */
-TEST_F(MediaPlayerTest, testPlayingTwoAttachments) {
+TEST_P(MediaPlayerTest, testSlow_playingTwoAttachments) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -932,7 +951,7 @@ TEST_F(MediaPlayerTest, testPlayingTwoAttachments) {
  * when the playback starts. Wait for playback to finish and expect the playback finished notification is received.
  * To a human ear the playback of this test is expected to sound reasonably smooth.
  */
-TEST_F(MediaPlayerTest, testUnsteadyReads) {
+TEST_P(MediaPlayerTest, testSlow_unsteadyReads) {
     // clang-format off
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId,
@@ -964,7 +983,7 @@ TEST_F(MediaPlayerTest, testUnsteadyReads) {
  * notification is received. To a human ear the playback of this test is expected to sound reasonably smooth
  * initially, then be interrupted for a few seconds, and then continue fairly smoothly.
  */
-TEST_F(MediaPlayerTest, testRecoveryFromPausedReads) {
+TEST_P(MediaPlayerTest, testSlow_recoveryFromPausedReads) {
     MediaPlayer::SourceId sourceId;
     // clang-format off
     setAttachmentReaderSource(&sourceId,
@@ -992,7 +1011,7 @@ TEST_F(MediaPlayerTest, testRecoveryFromPausedReads) {
 }
 
 /// Tests playing a dummy playlist
-TEST_F(MediaPlayerTest, testStartPlayWithUrlPlaylistWaitForEnd) {
+TEST_P(MediaPlayerTest, testSlow_startPlayWithUrlPlaylistWaitForEnd) {
     MediaPlayer::SourceId sourceId = m_mediaPlayer->setSource(TEST_M3U_PLAYLIST_URL);
     ASSERT_NE(ERROR_SOURCE_ID, sourceId);
     ASSERT_TRUE(m_mediaPlayer->play(sourceId));
@@ -1006,7 +1025,7 @@ TEST_F(MediaPlayerTest, testStartPlayWithUrlPlaylistWaitForEnd) {
  * Test setting the offset to a seekable source. Setting the offset should succeed and playback should start from the
  * offset.
  */
-TEST_F(MediaPlayerTest, testSetOffsetSeekableSource) {
+TEST_P(MediaPlayerTest, testTimer_setOffsetSeekableSource) {
     std::chrono::milliseconds offset(OFFSET);
 
     std::string url_single(FILE_PREFIX + inputsDirPath + MP3_FILE_PATH);
@@ -1030,7 +1049,7 @@ TEST_F(MediaPlayerTest, testSetOffsetSeekableSource) {
 /**
  * Test setting the offset outside the bounds of the source. Playback will immediately end.
  */
-TEST_F(MediaPlayerTest, DISABLED_testSetOffsetOutsideBounds) {
+TEST_P(MediaPlayerTest, DISABLED_test_setOffsetOutsideBounds) {
     std::chrono::milliseconds outOfBounds(MP3_FILE_LENGTH + PADDING);
 
     std::string url_single(FILE_PREFIX + inputsDirPath + MP3_FILE_PATH);
@@ -1047,7 +1066,7 @@ TEST_F(MediaPlayerTest, DISABLED_testSetOffsetOutsideBounds) {
  *
  * Consecutive calls to setSource(const std::string url) without play() cause tests to occasionally fail: ACSDK-508.
  */
-TEST_F(MediaPlayerTest, DISABLED_testSetSourceResetsOffset) {
+TEST_P(MediaPlayerTest, DISABLED_test_setSourceResetsOffset) {
     std::chrono::milliseconds offset(OFFSET);
 
     std::string url_single(FILE_PREFIX + inputsDirPath + MP3_FILE_PATH);
@@ -1076,7 +1095,7 @@ TEST_F(MediaPlayerTest, DISABLED_testSetSourceResetsOffset) {
  * Test consecutive setSource() and play() calls.  Expect the PlaybackStarted and PlaybackFinished will be received
  * before the timeout.
  */
-TEST_F(MediaPlayerTest, testRepeatAttachment) {
+TEST_P(MediaPlayerTest, testSlow_repeatAttachment) {
     MediaPlayer::SourceId sourceId;
     for (int i = 0; i < 10; i++) {
         setAttachmentReaderSource(&sourceId);
@@ -1090,7 +1109,7 @@ TEST_F(MediaPlayerTest, testRepeatAttachment) {
 /**
  * Test that the media plays after a volume change.
  */
-TEST_F(MediaPlayerTest, testSetVolumePlays) {
+TEST_P(MediaPlayerTest, testSlow_setVolumePlays) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1113,7 +1132,7 @@ TEST_F(MediaPlayerTest, testSetVolumePlays) {
 /**
  * Test that the media plays after a volume adjustment.
  */
-TEST_F(MediaPlayerTest, testAdjustVolumePlaysDuringPlay) {
+TEST_P(MediaPlayerTest, testSlow_adjustVolumePlaysDuringPlay) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1132,7 +1151,7 @@ TEST_F(MediaPlayerTest, testAdjustVolumePlaysDuringPlay) {
 /**
  * Test that the media plays after a volume adjustment.
  */
-TEST_F(MediaPlayerTest, testAdjustVolumePlays) {
+TEST_P(MediaPlayerTest, testSlow_adjustVolumePlays) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1157,7 +1176,7 @@ TEST_F(MediaPlayerTest, testAdjustVolumePlays) {
  * Test the play behavior when the media is adjusted out of bounds. The volume should be capped
  * at the bounds. The media should play to completion.
  */
-TEST_F(MediaPlayerTest, testAdjustVolumeOutOfBounds) {
+TEST_P(MediaPlayerTest, testSlow_adjustVolumeOutOfBounds) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1182,7 +1201,7 @@ TEST_F(MediaPlayerTest, testAdjustVolumeOutOfBounds) {
 /**
  * Test the media plays to completion even if it's muted.
  */
-TEST_F(MediaPlayerTest, testSetMutePlays) {
+TEST_P(MediaPlayerTest, testSlow_setMutePlays) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1206,7 +1225,7 @@ TEST_F(MediaPlayerTest, testSetMutePlays) {
 /**
  * Test that the speaker settings can be retrieved.
  */
-TEST_F(MediaPlayerTest, testGetSpeakerSettings) {
+TEST_P(MediaPlayerTest, test_getSpeakerSettings) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
     SpeakerInterface::SpeakerSettings settings;
@@ -1222,7 +1241,7 @@ TEST_F(MediaPlayerTest, testGetSpeakerSettings) {
  * Tests this rounding edgecase. Calling adjustVolume(-10) with volume at 90 resulted in a value of 79
  * when not rounded properly.
  */
-TEST_F(MediaPlayerTest, testRoundingEdgeCase) {
+TEST_P(MediaPlayerTest, test_roundingEdgeCase) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1239,7 +1258,7 @@ TEST_F(MediaPlayerTest, testRoundingEdgeCase) {
  * Check whether the playback started and playback finished notifications are received.
  * Check whether the tags were read from the file.
  */
-TEST_F(MediaPlayerTest, testReadTags) {
+TEST_P(MediaPlayerTest, testSlow_readTags) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1254,7 +1273,7 @@ TEST_F(MediaPlayerTest, testReadTags) {
 }
 
 /// Tests that consecutive calls to the same public API fails
-TEST_F(MediaPlayerTest, testConsecutiveSameApiCalls) {
+TEST_P(MediaPlayerTest, test_consecutiveSameApiCalls) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1272,7 +1291,7 @@ TEST_F(MediaPlayerTest, testConsecutiveSameApiCalls) {
 }
 
 /// Tests that pausing immediately before waiting for a callback is valid.
-TEST_F(MediaPlayerTest, testImmediatePause) {
+TEST_P(MediaPlayerTest, testSlow_immediatePause) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1286,7 +1305,7 @@ TEST_F(MediaPlayerTest, testImmediatePause) {
 }
 
 /// Tests setting multiple set source calls and observing onPlaybackStopped and onPlaybackFinished calls
-TEST_F(MediaPlayerTest, multiplePlayAndSetSource) {
+TEST_P(MediaPlayerTest, testSlow_multiplePlayAndSetSource) {
     MediaPlayer::SourceId sourceId;
     MediaPlayer::SourceId secondSourceId;
     MediaPlayer::SourceId thirdSourceId;
@@ -1310,7 +1329,7 @@ TEST_F(MediaPlayerTest, multiplePlayAndSetSource) {
 }
 
 /// Tests passing an invalid source id to a play() call
-TEST_F(MediaPlayerTest, invalidSourceId) {
+TEST_P(MediaPlayerTest, test_invalidSourceId) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1318,7 +1337,7 @@ TEST_F(MediaPlayerTest, invalidSourceId) {
 }
 
 /// Tests that two consecutive calls to pause fails.
-TEST_F(MediaPlayerTest, doublePause) {
+TEST_P(MediaPlayerTest, test_doublePause) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1329,7 +1348,7 @@ TEST_F(MediaPlayerTest, doublePause) {
 }
 
 /// Tests that a resume when already playing fails
-TEST_F(MediaPlayerTest, resumeWhenPlaying) {
+TEST_P(MediaPlayerTest, test_resumeWhenPlaying) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1339,7 +1358,7 @@ TEST_F(MediaPlayerTest, resumeWhenPlaying) {
 }
 
 /// Tests that a resume when stopped (not paused) fails
-TEST_F(MediaPlayerTest, resumeWhenStopped) {
+TEST_P(MediaPlayerTest, test_resumeWhenStopped) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1351,7 +1370,7 @@ TEST_F(MediaPlayerTest, resumeWhenStopped) {
 }
 
 /// Tests that a stop callback when playing leads to an onPlaybackStopped callback
-TEST_F(MediaPlayerTest, newSetSourceLeadsToStoppedCallback) {
+TEST_P(MediaPlayerTest, test_newSetSourceLeadsToStoppedCallback) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1365,7 +1384,7 @@ TEST_F(MediaPlayerTest, newSetSourceLeadsToStoppedCallback) {
 }
 
 /// Tests that resuming after a pause with a pending play leads to an onPlaybackResumed callback.
-TEST_F(MediaPlayerTest, resumeAfterPauseWithPendingPlay) {
+TEST_P(MediaPlayerTest, testSlow_resumeAfterPauseWithPendingPlay) {
     MediaPlayer::SourceId sourceId;
     setAttachmentReaderSource(&sourceId);
 
@@ -1385,6 +1404,19 @@ TEST_F(MediaPlayerTest, resumeAfterPauseWithPendingPlay) {
     ASSERT_TRUE(m_playerObserver->waitForPlaybackResumed(sourceId));
 
     ASSERT_TRUE(m_playerObserver->waitForPlaybackFinished(sourceId));
+}
+
+/// Tests that playing continues until stop is called when repeat is on
+TEST_P(MediaPlayerTest, testSlow_repeatPlayForUrl) {
+    bool repeat = true;
+    std::string url_single(FILE_PREFIX + inputsDirPath + MP3_FILE_PATH);
+    auto sourceId = m_mediaPlayer->setSource(url_single, std::chrono::milliseconds::zero(), repeat);
+    ASSERT_NE(ERROR_SOURCE_ID, sourceId);
+    ASSERT_TRUE(m_mediaPlayer->play(sourceId));
+    ASSERT_TRUE(m_playerObserver->waitForPlaybackStarted(sourceId));
+    ASSERT_FALSE(m_playerObserver->waitForPlaybackFinished(sourceId));
+    ASSERT_TRUE(m_mediaPlayer->stop(sourceId));
+    ASSERT_TRUE(m_playerObserver->waitForPlaybackStopped(sourceId));
 }
 
 }  // namespace test

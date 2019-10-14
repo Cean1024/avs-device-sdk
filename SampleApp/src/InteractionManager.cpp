@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -13,9 +13,17 @@
  * permissions and limitations under the License.
  */
 
-#include "ESP/ESPDataProviderInterface.h"
 #include "RegistrationManager/CustomerDataManager.h"
 #include "SampleApp/InteractionManager.h"
+
+#ifdef ENABLE_PCC
+#include <SampleApp/PhoneCaller.h>
+#endif
+
+#ifdef ENABLE_MCC
+#include <SampleApp/CalendarClient.h>
+#include <SampleApp/MeetingClient.h>
+#endif
 
 namespace alexaClientSDK {
 namespace sampleApp {
@@ -26,21 +34,31 @@ InteractionManager::InteractionManager(
     std::shared_ptr<defaultClient::DefaultClient> client,
     std::shared_ptr<applicationUtilities::resources::audio::MicrophoneInterface> micWrapper,
     std::shared_ptr<sampleApp::UIManager> userInterface,
+#ifdef ENABLE_PCC
+    std::shared_ptr<sampleApp::PhoneCaller> phoneCaller,
+#endif
+#ifdef ENABLE_MCC
+    std::shared_ptr<sampleApp::MeetingClient> meetingClient,
+    std::shared_ptr<sampleApp::CalendarClient> calendarClient,
+#endif
     capabilityAgents::aip::AudioProvider holdToTalkAudioProvider,
     capabilityAgents::aip::AudioProvider tapToTalkAudioProvider,
     std::shared_ptr<sampleApp::GuiRenderer> guiRenderer,
     capabilityAgents::aip::AudioProvider wakeWordAudioProvider,
-    std::shared_ptr<esp::ESPDataProviderInterface> espProvider,
-    std::shared_ptr<esp::ESPDataModifierInterface> espModifier,
     std::shared_ptr<avsCommon::sdkInterfaces::CallManagerInterface> callManager) :
         RequiresShutdown{"InteractionManager"},
         m_client{client},
         m_micWrapper{micWrapper},
         m_userInterface{userInterface},
         m_guiRenderer{guiRenderer},
-        m_espProvider{espProvider},
-        m_espModifier{espModifier},
         m_callManager{callManager},
+#ifdef ENABLE_PCC
+        m_phoneCaller{phoneCaller},
+#endif
+#ifdef ENABLE_MCC
+        m_meetingClient{meetingClient},
+        m_calendarClient{calendarClient},
+#endif
         m_holdToTalkAudioProvider{holdToTalkAudioProvider},
         m_tapToTalkAudioProvider{tapToTalkAudioProvider},
         m_wakeWordAudioProvider{wakeWordAudioProvider},
@@ -73,12 +91,24 @@ void InteractionManager::locale() {
     m_executor.submit([this]() { m_userInterface->printLocaleScreen(); });
 }
 
-void InteractionManager::errorValue() {
-    m_executor.submit([this]() { m_userInterface->printErrorScreen(); });
+void InteractionManager::wakewordConfirmation() {
+    m_executor.submit([this]() { m_userInterface->printWakeWordConfirmationScreen(); });
 }
 
-void InteractionManager::changeSetting(const std::string& key, const std::string& value) {
-    m_executor.submit([this, key, value]() { m_client->changeSetting(key, value); });
+void InteractionManager::speechConfirmation() {
+    m_executor.submit([this]() { m_userInterface->printSpeechConfirmationScreen(); });
+}
+
+void InteractionManager::timeZone() {
+    m_executor.submit([this]() { m_userInterface->printTimeZoneScreen(); });
+}
+
+void InteractionManager::doNotDisturb() {
+    m_executor.submit([this]() { m_userInterface->printDoNotDisturbScreen(); });
+}
+
+void InteractionManager::errorValue() {
+    m_executor.submit([this]() { m_userInterface->printErrorScreen(); });
 }
 
 void InteractionManager::microphoneToggle() {
@@ -247,56 +277,6 @@ void InteractionManager::confirmReauthorizeDevice() {
     m_executor.submit([this]() { m_userInterface->printReauthorizeConfirmation(); });
 }
 
-void InteractionManager::espControl() {
-    m_executor.submit([this]() {
-        if (m_espProvider) {
-            auto espData = m_espProvider->getESPData();
-            m_userInterface->printESPControlScreen(
-                m_espProvider->isEnabled(), espData.getVoiceEnergy(), espData.getAmbientEnergy());
-        } else {
-            m_userInterface->printESPNotSupported();
-        }
-    });
-}
-
-void InteractionManager::toggleESPSupport() {
-    m_executor.submit([this]() {
-        if (m_espProvider) {
-            m_espProvider->isEnabled() ? m_espProvider->disable() : m_espProvider->enable();
-        } else {
-            m_userInterface->printESPNotSupported();
-        }
-    });
-}
-
-void InteractionManager::setESPVoiceEnergy(const std::string& voiceEnergy) {
-    m_executor.submit([this, voiceEnergy]() {
-        if (m_espProvider) {
-            if (m_espModifier) {
-                m_espModifier->setVoiceEnergy(voiceEnergy);
-            } else {
-                m_userInterface->printESPDataOverrideNotSupported();
-            }
-        } else {
-            m_userInterface->printESPNotSupported();
-        }
-    });
-}
-
-void InteractionManager::setESPAmbientEnergy(const std::string& ambientEnergy) {
-    m_executor.submit([this, ambientEnergy]() {
-        if (m_espProvider) {
-            if (m_espModifier) {
-                m_espModifier->setAmbientEnergy(ambientEnergy);
-            } else {
-                m_userInterface->printESPDataOverrideNotSupported();
-            }
-        } else {
-            m_userInterface->printESPNotSupported();
-        }
-    });
-}
-
 void InteractionManager::commsControl() {
     m_executor.submit([this]() {
         if (m_client->isCommsEnabled()) {
@@ -332,6 +312,196 @@ void InteractionManager::onDialogUXStateChanged(DialogUXState state) {
     if (DialogUXState::LISTENING != state) {
         m_isTapOccurring = false;
     }
+}
+
+void InteractionManager::setSpeechConfirmation(settings::SpeechConfirmationSettingType value) {
+    m_client->getSettingsManager()->setValue<settings::SPEECH_CONFIRMATION>(value);
+}
+
+void InteractionManager::setWakewordConfirmation(settings::WakeWordConfirmationSettingType value) {
+    m_client->getSettingsManager()->setValue<settings::WAKEWORD_CONFIRMATION>(value);
+}
+
+void InteractionManager::setTimeZone(const std::string& value) {
+    m_client->getSettingsManager()->setValue<settings::TIMEZONE>(value);
+}
+
+void InteractionManager::setLocale(const settings::DeviceLocales& value) {
+    m_client->getSettingsManager()->setValue<settings::LOCALE>(value);
+}
+
+#ifdef ENABLE_PCC
+void InteractionManager::phoneControl() {
+    m_executor.submit([this]() { m_userInterface->printPhoneControlScreen(); });
+}
+
+void InteractionManager::callId() {
+    m_executor.submit([this]() { m_userInterface->printCallIdScreen(); });
+}
+
+void InteractionManager::callerId() {
+    m_executor.submit([this]() { m_userInterface->printCallerIdScreen(); });
+}
+
+void InteractionManager::sendCallActivated(const std::string& callId) {
+    m_executor.submit([this, callId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendCallActivated(callId);
+        }
+    });
+}
+void InteractionManager::sendCallTerminated(const std::string& callId) {
+    m_executor.submit([this, callId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendCallTerminated(callId);
+        }
+    });
+}
+
+void InteractionManager::sendCallFailed(const std::string& callId) {
+    m_executor.submit([this, callId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendCallFailed(callId);
+        }
+    });
+}
+
+void InteractionManager::sendCallReceived(const std::string& callId, const std::string& callerId) {
+    m_executor.submit([this, callId, callerId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendCallReceived(callId, callerId);
+        }
+    });
+}
+
+void InteractionManager::sendCallerIdReceived(const std::string& callId, const std::string& callerId) {
+    m_executor.submit([this, callId, callerId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendCallerIdReceived(callId, callerId);
+        }
+    });
+}
+
+void InteractionManager::sendInboundRingingStarted(const std::string& callId) {
+    m_executor.submit([this, callId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendInboundRingingStarted(callId);
+        }
+    });
+}
+
+void InteractionManager::sendOutboundCallRequested(const std::string& callId) {
+    m_executor.submit([this, callId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendDialStarted(callId);
+        }
+    });
+}
+
+void InteractionManager::sendOutboundRingingStarted(const std::string& callId) {
+    m_executor.submit([this, callId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendOutboundRingingStarted(callId);
+        }
+    });
+}
+
+void InteractionManager::sendSendDtmfSucceeded(const std::string& callId) {
+    m_executor.submit([this, callId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendSendDtmfSucceeded(callId);
+        }
+    });
+}
+
+void InteractionManager::sendSendDtmfFailed(const std::string& callId) {
+    m_executor.submit([this, callId]() {
+        if (m_phoneCaller) {
+            m_phoneCaller->sendSendDtmfFailed(callId);
+        }
+    });
+}
+#endif
+
+#ifdef ENABLE_MCC
+void InteractionManager::meetingControl() {
+    m_executor.submit([this]() { m_userInterface->printMeetingControlScreen(); });
+}
+
+void InteractionManager::sessionId() {
+    m_executor.submit([this]() { m_userInterface->printSessionIdScreen(); });
+}
+
+void InteractionManager::calendarItemsFile() {
+    m_executor.submit([this]() { m_userInterface->printCalendarItemsScreen(); });
+}
+
+void InteractionManager::sendMeetingJoined(const std::string& sessionId) {
+    m_executor.submit([this, sessionId]() {
+        if (m_meetingClient) {
+            m_meetingClient->sendMeetingJoined(sessionId);
+        }
+    });
+}
+void InteractionManager::sendMeetingEnded(const std::string& sessionId) {
+    m_executor.submit([this, sessionId]() {
+        if (m_meetingClient) {
+            m_meetingClient->sendMeetingEnded(sessionId);
+        }
+    });
+}
+
+void InteractionManager::sendSetCurrentMeetingSession(const std::string& sessionId) {
+    m_executor.submit([this, sessionId]() {
+        if (m_meetingClient) {
+            m_meetingClient->sendSetCurrentMeetingSession(sessionId);
+        }
+    });
+}
+
+void InteractionManager::sendClearCurrentMeetingSession() {
+    m_executor.submit([this]() {
+        if (m_meetingClient) {
+            m_meetingClient->sendClearCurrentMeetingSession();
+        }
+    });
+}
+
+void InteractionManager::sendConferenceConfigurationChanged() {
+    m_executor.submit([this]() {
+        if (m_meetingClient) {
+            m_meetingClient->sendConferenceConfigurationChanged();
+        }
+    });
+}
+
+void InteractionManager::sendMeetingClientErrorOccured(const std::string& sessionId) {
+    m_executor.submit([this, sessionId]() {
+        if (m_meetingClient) {
+            m_meetingClient->sendMeetingClientErrorOccured(sessionId);
+        }
+    });
+}
+
+void InteractionManager::sendCalendarItemsRetrieved(const std::string& calendarItemsFile) {
+    m_executor.submit([this, calendarItemsFile]() {
+        if (m_calendarClient) {
+            m_calendarClient->sendCalendarItemsRetrieved(calendarItemsFile);
+        }
+    });
+}
+
+void InteractionManager::sendCalendarClientErrorOccured() {
+    m_executor.submit([this]() {
+        if (m_calendarClient) {
+            m_calendarClient->sendCalendarClientErrorOccured();
+        }
+    });
+}
+#endif
+
+void InteractionManager::setDoNotDisturbMode(bool enable) {
+    m_client->getSettingsManager()->setValue<settings::DO_NOT_DISTURB>(enable);
 }
 
 void InteractionManager::doShutdown() {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -371,7 +371,7 @@ protected:
         bool nameFound = false;
         do {
             params = m_exceptionEncounteredSender->waitForNext(WAIT_FOR_TIMEOUT_DURATION);
-            if (params.directive->getName() == name) {
+            if (params.directive && params.directive->getName() == name) {
                 nameFound = true;
             }
         } while (params.type != TestExceptionEncounteredSender::ExceptionParams::Type::TIMEOUT && !nameFound);
@@ -442,10 +442,10 @@ bool getToken(TestDirectiveHandler::DirectiveParams params, std::string& returnT
  * This test is intended to test @c DirectiveSequencer's ability to pass an @c AVSDirective to a @c DirectiveHandler
  * that has been registered to handle an @c AVSDirective.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, sendEventWithDirective) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_sendEventWithDirective) {
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
-    config[SPEAK_PAIR] = BlockingPolicy::BLOCKING;
+    config[SET_MUTE_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    config[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -472,10 +472,11 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, sendEventWithDirective) {
  * request. It then verifies that handleDirective() is called for the subsequent directives without waiting for
  * completion of handling of any of the directives.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, sendDirectiveGroupWithoutBlocking) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_sendDirectiveGroupWithoutBlocking) {
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
-    config[SPEAK_PAIR] = BlockingPolicy::NON_BLOCKING;
+    auto audioNonBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    config[SET_MUTE_PAIR] = audioNonBlockingPolicy;
+    config[SPEAK_PAIR] = audioNonBlockingPolicy;
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -517,10 +518,11 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, sendDirectiveGroupWithoutBlocking) {
  * It then verifies that the directive handler was not called for the @c AVSDirectives expected to result from the
  * second event.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, sendDirectiveWithDifferentDialogRequestID) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_sendDirectiveWithDifferentDialogRequestID) {
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
-    config[SPEAK_PAIR] = BlockingPolicy::NON_BLOCKING;
+    auto audioNonBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    config[SET_MUTE_PAIR] = audioNonBlockingPolicy;
+    config[SPEAK_PAIR] = audioNonBlockingPolicy;
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -566,10 +568,10 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, sendDirectiveWithDifferentDialogReque
  * are then consumed verifying cancellation of @c AVSDirectives from the first group and handling of @c AVSDirectives
  * in the second group.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, dropQueueAfterBargeIn) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_dropQueueAfterBargeIn) {
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
-    config[SPEAK_PAIR] = BlockingPolicy::BLOCKING;
+    config[SET_MUTE_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    config[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -628,10 +630,11 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, dropQueueAfterBargeIn) {
  * @c SetAlert directives do not have a @c dialogRequestId value. This test uses that fact to verify that
  * @c AVSDirectives with no @c dialogRequestId are processed properly.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, sendDirectiveWithoutADialogRequestID) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, DISABLED_test_sendDirectiveWithoutADialogRequestID) {
     DirectiveHandlerConfiguration config;
-    config[SPEAK_PAIR] = BlockingPolicy::NON_BLOCKING;
-    config[SET_ALERT_PAIR] = BlockingPolicy::NON_BLOCKING;
+    auto audioNonBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    config[SPEAK_PAIR] = audioNonBlockingPolicy;
+    config[SET_ALERT_PAIR] = audioNonBlockingPolicy;
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -709,10 +712,10 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, sendDirectiveWithoutADialogRequestID)
  * number of @c preHandleDirective() and @c handleDirective() callbacks verifying that the counts come out to the
  * same value in the end.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, sendDirectivesForPreHandling) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_sendDirectivesForPreHandling) {
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
-    config[SPEAK_PAIR] = BlockingPolicy::BLOCKING;
+    config[SET_MUTE_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    config[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -753,10 +756,10 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, sendDirectivesForPreHandling) {
  * canned @c Recognize request. When @c handleDirective() is called for the blocking @c AVSDirective, setFailed()
  * is called to trigger the cancellation of subsequent @c AVSDirectives in the same group.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, cancelDirectivesWhileInQueue) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_cancelDirectivesWhileInQueue) {
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
-    config[SPEAK_PAIR] = BlockingPolicy::BLOCKING;
+    config[SET_MUTE_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    config[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -797,10 +800,10 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, cancelDirectivesWhileInQueue) {
  * directive and then nothing until setComplete() is called for that directive. Then expect the directive handler
  * to receive at least one subsequent directive.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, oneBlockingDirectiveAtTheFront) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_oneBlockingDirectiveAtTheFront) {
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::BLOCKING;
-    config[SPEAK_PAIR] = BlockingPolicy::NON_BLOCKING;
+    config[SET_MUTE_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
+    config[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -859,10 +862,10 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, oneBlockingDirectiveAtTheFront) {
  * @c AVSDirective, @c handleDirective() should be called for the subsequent (and @c NON_BLOCKING) @c AVSDirectives
  * without waiting for the completion of any subsequent @c AVSDirectives.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, oneBlockingDirectiveInTheMiddle) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_oneBlockingDirectiveInTheMiddle) {
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
-    config[SPEAK_PAIR] = BlockingPolicy::BLOCKING;
+    config[SET_MUTE_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    config[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -914,10 +917,10 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, oneBlockingDirectiveInTheMiddle) {
  * To do this, no handler is set for a directive (@c SetMute) that is known to come down consistently in response to
  * a Recognize event, instead an exception encountered is expected.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, noDirectiveHandlerRegisteredForADirectiveAtTheFront) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_noDirectiveHandlerRegisteredForADirectiveAtTheFront) {
     // Don't Register a DirectiveHandler for SetMute.
     DirectiveHandlerConfiguration config;
-    config[SPEAK_PAIR] = BlockingPolicy::NON_BLOCKING;
+    config[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -942,10 +945,10 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, noDirectiveHandlerRegisteredForADirec
  * To do this, no handler is set for a directive (@c SetMute) that is known to come down consistently in response to
  * a Recognize event, instead an exception encountered is expected.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, noDirectiveHandlerRegisteredForADirectiveInTheMiddle) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, DISABLED_test_noDirectiveHandlerRegisteredForADirectiveInTheMiddle) {
     // Don't Register a DirectiveHandler for Speak.
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
+    config[SET_MUTE_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -971,14 +974,15 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, noDirectiveHandlerRegisteredForADirec
  * is expected to refuse the second handler. This directive is known to come down consistently in response to a
  * Recognize event. The Handler that was first set is the only one that should receive the directive.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, twoDirectiveHandlersRegisteredForADirective) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_twoDirectiveHandlersRegisteredForADirective) {
     DirectiveHandlerConfiguration handlerAConfig;
-    handlerAConfig[SET_MUTE_PAIR] = BlockingPolicy::BLOCKING;
+    auto audioBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
+    handlerAConfig[SET_MUTE_PAIR] = audioBlockingPolicy;
 
     auto directiveHandlerA = std::make_shared<TestDirectiveHandler>(handlerAConfig);
 
     DirectiveHandlerConfiguration handlerbConfig;
-    handlerbConfig[SET_MUTE_PAIR] = BlockingPolicy::BLOCKING;
+    handlerbConfig[SET_MUTE_PAIR] = audioBlockingPolicy;
     auto directiveHandlerB = std::make_shared<TestDirectiveHandler>(handlerbConfig);
 
     ASSERT_TRUE(m_directiveSequencer->addDirectiveHandler(directiveHandlerA));
@@ -1014,11 +1018,12 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, twoDirectiveHandlersRegisteredForADir
  * event that will prompt a multi-turn directive, receiving a directive group that contains ExpectSpeech, sending a
  * recognize event to respond to Alexa's question, and receiving the final directive group.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, multiturnScenario) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_multiturnScenario) {
     DirectiveHandlerConfiguration config;
-    config[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
-    config[SPEAK_PAIR] = BlockingPolicy::BLOCKING;
-    config[EXPECT_SPEECH_PAIR] = BlockingPolicy::NON_BLOCKING;
+    auto audioNonBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    config[SET_MUTE_PAIR] = audioNonBlockingPolicy;
+    config[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
+    config[EXPECT_SPEECH_PAIR] = audioNonBlockingPolicy;
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
@@ -1067,9 +1072,9 @@ TEST_F(AlexaDirectiveSequencerLibraryTest, multiturnScenario) {
 /**
  * Test ability to get an attachment from @c AttachmentManager.
  */
-TEST_F(AlexaDirectiveSequencerLibraryTest, getAttachmentWithContentId) {
+TEST_F(AlexaDirectiveSequencerLibraryTest, test_getAttachmentWithContentId) {
     DirectiveHandlerConfiguration config;
-    config[SPEAK_PAIR] = BlockingPolicy::BLOCKING;
+    config[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
 
     auto directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 

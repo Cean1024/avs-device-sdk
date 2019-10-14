@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -250,12 +250,15 @@ std::shared_ptr<AlertsCapabilityAgent> AlertsCapabilityAgent::create(
 }
 
 avsCommon::avs::DirectiveHandlerConfiguration AlertsCapabilityAgent::getConfiguration() const {
+    auto audioNonBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    auto neitherNonBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUMS_NONE, false);
+
     avsCommon::avs::DirectiveHandlerConfiguration configuration;
-    configuration[SET_ALERT] = avsCommon::avs::BlockingPolicy::NON_BLOCKING;
-    configuration[DELETE_ALERT] = avsCommon::avs::BlockingPolicy::NON_BLOCKING;
-    configuration[DELETE_ALERTS] = avsCommon::avs::BlockingPolicy::NON_BLOCKING;
-    configuration[SET_VOLUME] = avsCommon::avs::BlockingPolicy::NON_BLOCKING;
-    configuration[ADJUST_VOLUME] = avsCommon::avs::BlockingPolicy::NON_BLOCKING;
+    configuration[SET_ALERT] = neitherNonBlockingPolicy;
+    configuration[DELETE_ALERT] = neitherNonBlockingPolicy;
+    configuration[DELETE_ALERTS] = neitherNonBlockingPolicy;
+    configuration[SET_VOLUME] = audioNonBlockingPolicy;
+    configuration[ADJUST_VOLUME] = audioNonBlockingPolicy;
     return configuration;
 }
 
@@ -301,10 +304,17 @@ void AlertsCapabilityAgent::onFocusChanged(const std::string& channelName, avsCo
 
 void AlertsCapabilityAgent::onAlertStateChange(
     const std::string& alertToken,
+    const std::string& alertType,
     AlertObserverInterface::State state,
     const std::string& reason) {
-    ACSDK_DEBUG9(LX("onAlertStateChange").d("alertToken", alertToken).d("state", state).d("reason", reason));
-    m_executor.submit([this, alertToken, state, reason]() { executeOnAlertStateChange(alertToken, state, reason); });
+    ACSDK_DEBUG9(LX("onAlertStateChange")
+                     .d("alertToken", alertToken)
+                     .d("alertType", alertType)
+                     .d("state", state)
+                     .d("reason", reason));
+    m_executor.submit([this, alertToken, alertType, state, reason]() {
+        executeOnAlertStateChange(alertToken, alertType, state, reason);
+    });
 }
 
 void AlertsCapabilityAgent::addObserver(std::shared_ptr<AlertObserverInterface> observer) {
@@ -543,7 +553,10 @@ bool AlertsCapabilityAgent::handleAdjustVolume(
     }
 
     SpeakerInterface::SpeakerSettings speakerSettings;
-    m_speakerManager->getSpeakerSettings(SpeakerInterface::Type::AVS_ALERTS_VOLUME, &speakerSettings);
+    if (!m_speakerManager->getSpeakerSettings(SpeakerInterface::Type::AVS_ALERTS_VOLUME, &speakerSettings).get()) {
+        ACSDK_ERROR(LX("handleAdjustVolumeFailed").m("Could not retrieve speaker volume."));
+        return false;
+    }
     int64_t volume = adjustValue + speakerSettings.volume;
 
     setNextAlertVolume(volume);
@@ -656,13 +669,13 @@ void AlertsCapabilityAgent::sendProcessingDirectiveException(
 
 void AlertsCapabilityAgent::acquireChannel() {
     ACSDK_DEBUG9(LX("acquireChannel"));
-    m_focusManager->acquireChannel(FocusManagerInterface::ALERTS_CHANNEL_NAME, shared_from_this(), NAMESPACE);
+    m_focusManager->acquireChannel(FocusManagerInterface::ALERT_CHANNEL_NAME, shared_from_this(), NAMESPACE);
 }
 
 void AlertsCapabilityAgent::releaseChannel() {
     ACSDK_DEBUG9(LX("releaseChannel"));
     if (m_alertScheduler.getFocusState() != FocusState::NONE) {
-        m_focusManager->releaseChannel(FocusManagerInterface::ALERTS_CHANNEL_NAME, shared_from_this());
+        m_focusManager->releaseChannel(FocusManagerInterface::ALERT_CHANNEL_NAME, shared_from_this());
     }
 }
 
@@ -749,6 +762,7 @@ void AlertsCapabilityAgent::executeOnFocusManagerFocusChanged(
 
 void AlertsCapabilityAgent::executeOnAlertStateChange(
     const std::string& alertToken,
+    const std::string& alertType,
     AlertObserverInterface::State state,
     const std::string& reason) {
     ACSDK_DEBUG1(LX("executeOnAlertStateChange").d("alertToken", alertToken).d("state", state).d("reason", reason));
@@ -829,7 +843,9 @@ void AlertsCapabilityAgent::executeOnAlertStateChange(
         }
     }
 
-    m_executor.submit([this, alertToken, state, reason]() { executeNotifyObservers(alertToken, state, reason); });
+    m_executor.submit([this, alertToken, alertType, state, reason]() {
+        executeNotifyObservers(alertToken, alertType, state, reason);
+    });
 }
 
 void AlertsCapabilityAgent::executeAddObserver(std::shared_ptr<AlertObserverInterface> observer) {
@@ -844,11 +860,16 @@ void AlertsCapabilityAgent::executeRemoveObserver(std::shared_ptr<AlertObserverI
 
 void AlertsCapabilityAgent::executeNotifyObservers(
     const std::string& alertToken,
+    const std::string& alertType,
     AlertObserverInterface::State state,
     const std::string& reason) {
-    ACSDK_DEBUG1(LX("executeNotifyObservers").d("alertToken", alertToken).d("state", state).d("reason", reason));
+    ACSDK_DEBUG1(LX("executeNotifyObservers")
+                     .d("alertToken", alertToken)
+                     .d("alertType", alertType)
+                     .d("state", state)
+                     .d("reason", reason));
     for (auto observer : m_observers) {
-        observer->onAlertStateChange(alertToken, state, reason);
+        observer->onAlertStateChange(alertToken, alertType, state, reason);
     }
 }
 
@@ -943,13 +964,9 @@ void AlertsCapabilityAgent::setNextAlertVolume(int64_t volume) {
 
     ACSDK_DEBUG5(LX(__func__).d("New Alerts volume", volume));
 
-    // Check if there are alerts currently active and change actual volume only if there is none
-    if (!m_alertIsSounding) {
-        m_speakerManager
-            ->setVolume(
-                avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_ALERTS_VOLUME, static_cast<int8_t>(volume))
-            .get();
-    }
+    m_speakerManager
+        ->setVolume(avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_ALERTS_VOLUME, static_cast<int8_t>(volume))
+        .get();
 
     // Always notify AVS of volume changes here
     updateAVSWithLocalVolumeChanges(static_cast<int8_t>(volume), true);

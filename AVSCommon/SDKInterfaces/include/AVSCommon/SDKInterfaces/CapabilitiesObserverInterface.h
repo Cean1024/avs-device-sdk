@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -82,7 +82,7 @@ public:
 inline std::ostream& operator<<(std::ostream& stream, const CapabilitiesObserverInterface::State& state) {
     switch (state) {
         case CapabilitiesObserverInterface::State::UNINITIALIZED:
-            return stream << "UNINTIALIZED";
+            return stream << "UNINITIALIZED";
         case CapabilitiesObserverInterface::State::SUCCESS:
             return stream << "SUCCESS";
         case CapabilitiesObserverInterface::State::FATAL_ERROR:
@@ -103,7 +103,7 @@ inline std::ostream& operator<<(std::ostream& stream, const CapabilitiesObserver
 inline std::ostream& operator<<(std::ostream& stream, const CapabilitiesObserverInterface::Error& error) {
     switch (error) {
         case CapabilitiesObserverInterface::Error::UNINITIALIZED:
-            return stream << "UNINTIALIZED";
+            return stream << "UNINITIALIZED";
         case CapabilitiesObserverInterface::Error::SUCCESS:
             return stream << "SUCCESS";
         case CapabilitiesObserverInterface::Error::UNKNOWN_ERROR:
@@ -113,7 +113,7 @@ inline std::ostream& operator<<(std::ostream& stream, const CapabilitiesObserver
         case CapabilitiesObserverInterface::Error::SERVER_INTERNAL_ERROR:
             return stream << "SERVER_INTERNAL_ERROR";
         case CapabilitiesObserverInterface::Error::BAD_REQUEST:
-            return stream << "BAD_REQUEST";
+            return stream << "CLIENT_ERROR_BAD_REQUEST";
     }
     return stream << "Unknown CapabilitiesObserverInterface::Error!: " << error;
 }

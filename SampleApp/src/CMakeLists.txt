@@ -6,6 +6,7 @@ list(APPEND SampleApp_SOURCES
     GuiRenderer.cpp
     InteractionManager.cpp
     KeywordObserver.cpp
+    LocaleAssetsManager.cpp
     UIManager.cpp
     UserInputManager.cpp
     SampleApplication.cpp
@@ -19,6 +20,15 @@ endif()
 IF (A4B)
     list(APPEND SampleApp_SOURCES RevokeAuthorizationObserver.cpp)
 ENDIF()
+
+if (PCC)
+    list(APPEND SampleApp_SOURCES PhoneCaller.cpp)
+endif()
+
+if (MCC)
+    list(APPEND SampleApp_SOURCES MeetingClient.cpp)
+    list(APPEND SampleApp_SOURCES CalendarClient.cpp)
+endif()
 
 IF (HAS_EXTERNAL_MEDIA_PLAYER_ADAPTERS)
     file(GLOB_RECURSE SRC_FILE ${CMAKE_CURRENT_SOURCE_DIR}/ExternalMediaAdapterRegistration/*.cpp)
@@ -36,14 +46,21 @@ target_include_directories(SampleApp PUBLIC
     "${ESP_SOURCE_DIR}/include"
     "${PORTAUDIO_INCLUDE_DIR}")
 
-target_link_libraries(SampleApp 
+target_link_libraries(SampleApp
     DefaultClient
     CapabilitiesDelegate
     CBLAuthDelegate
     SQLiteStorage
-    ESP
     EqualizerImplementations
     "${PORTAUDIO_LIB_PATH}")
+
+if (PCC)
+    target_link_libraries(SampleApp AVSCommon)
+endif()
+
+if (MCC)
+    target_link_libraries(SampleApp AVSCommon)
+endif()
 
 if (ANDROID)
     target_include_directories(SampleApp PUBLIC "${AndroidUtilities}/include")
@@ -72,6 +89,6 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
         "-framework Carbon")
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     target_link_libraries(SampleApp
-      rt m pthread asound)
+      rt m pthread asound atomic)
 endif()
 

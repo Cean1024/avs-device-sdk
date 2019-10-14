@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -24,11 +24,11 @@
 #include <gmock/gmock.h>
 
 #include "AVSCommon/Utils/Common/Common.h"
+#include "AVSCommon/Utils/HTTP/HttpResponseCode.h"
 #include "AVSCommon/Utils/HTTP2/HTTP2MimeRequestEncoder.h"
 #include "AVSCommon/Utils/HTTP2/HTTP2MimeResponseDecoder.h"
 #include "AVSCommon/Utils/HTTP2/MockHTTP2MimeRequestEncodeSource.h"
 #include "AVSCommon/Utils/HTTP2/MockHTTP2MimeResponseDecodeSink.h"
-#include "AVSCommon/Utils/LibcurlUtils/HttpResponseCodes.h"
 #include "AVSCommon/Utils/Logger/LoggerUtils.h"
 
 namespace alexaClientSDK {
@@ -36,6 +36,7 @@ namespace avsCommon {
 namespace test {
 
 using namespace testing;
+using namespace avsCommon::utils::http;
 using namespace avsCommon::utils::http2;
 using namespace avsCommon::utils;
 using namespace avsCommon::utils::logger;
@@ -184,7 +185,7 @@ public:
  * Test for correct encoded size, header presence and validity
  * of Return status for every call as well as bytes written.
  */
-TEST_F(MIMEParserTest, encodingSanityTest) {
+TEST_F(MIMEParserTest, test_encodingSanity) {
     /// We choose an arbitrary buffer size
     const int bufferSize{25};
 
@@ -222,7 +223,7 @@ TEST_F(MIMEParserTest, encodingSanityTest) {
     ASSERT_EQ(index, encodedSize);
 }
 
-TEST_F(MIMEParserTest, decodingSanityTest) {
+TEST_F(MIMEParserTest, test_decodingSanity) {
     /// We choose an arbitrary buffer size
     const int bufferSize{25};
     /// We need to pass a header with boundary info
@@ -290,7 +291,8 @@ void runCodecTest(
     const std::string boundaryHeader{BOUNDARY_HEADER_PREFIX + boundary};
     bool resp = decoder.onReceiveHeaderLine(boundaryHeader);
     ASSERT_TRUE(resp);
-    decoder.onReceiveResponseCode(HTTPResponseCode::SUCCESS_OK);
+    decoder.onReceiveResponseCode(
+        static_cast<std::underlying_type<HTTPResponseCode>::type>(HTTPResponseCode::SUCCESS_OK));
     while ((status == HTTP2ReceiveDataStatus::SUCCESS || status == HTTP2ReceiveDataStatus::PAUSE) &&
            index < finalSize) {
         auto sizeToSend = (index + bufferSize) > finalSize ? finalSize - index : bufferSize;
@@ -305,7 +307,7 @@ void runCodecTest(
     ASSERT_EQ(pauseCount, sink->m_pauseCount);
 }
 
-TEST_F(MIMEParserTest, singlePayloadSinglePass) {
+TEST_F(MIMEParserTest, test_singlePayloadSinglePass) {
     // Sufficiently large buffer to accommodate payload
     const int bufferSize{LARGE};
 
@@ -327,7 +329,7 @@ TEST_F(MIMEParserTest, singlePayloadSinglePass) {
     runCodecTest(source, sink, bufferSize);
 }
 
-TEST_F(MIMEParserTest, singlePayloadMultiplePasses) {
+TEST_F(MIMEParserTest, test_singlePayloadMultiplePasses) {
     // Medium sized payload and buffer
     const int bufferSize{SMALL};
     // setup source
@@ -350,7 +352,7 @@ TEST_F(MIMEParserTest, singlePayloadMultiplePasses) {
     runCodecTest(source, sink, bufferSize);
 }
 
-TEST_F(MIMEParserTest, multiplePayloadsSinglePass) {
+TEST_F(MIMEParserTest, test_multiplePayloadsSinglePass) {
     const int bufferSize{LARGE};
     std::vector<std::string> data;
     std::vector<std::vector<std::string>> headerSets;
@@ -373,7 +375,7 @@ TEST_F(MIMEParserTest, multiplePayloadsSinglePass) {
     runCodecTest(source, sink, bufferSize);
 }
 
-TEST_F(MIMEParserTest, multiplePayloadsMultiplePasses) {
+TEST_F(MIMEParserTest, test_multiplePayloadsMultiplePasses) {
     const int bufferSize{SMALL};
     std::vector<std::string> data;
     std::vector<std::vector<std::string>> headerSets;
@@ -399,7 +401,7 @@ TEST_F(MIMEParserTest, multiplePayloadsMultiplePasses) {
 /**
  * Test feeding mime text including duplicate boundaries that we want to just skip over.
  */
-TEST_F(MIMEParserTest, duplicateBoundaries) {
+TEST_F(MIMEParserTest, test_duplicateBoundaries) {
     /// We choose an arbitrary buffer size
     const int bufferSize{25};
     /// We need to pass a header with boundary info
@@ -431,7 +433,8 @@ TEST_F(MIMEParserTest, duplicateBoundaries) {
     size_t index{0};
     HTTP2ReceiveDataStatus status{HTTP2ReceiveDataStatus::SUCCESS};
     bool resp = decoder.onReceiveHeaderLine(boundaryHeader);
-    decoder.onReceiveResponseCode(HTTPResponseCode::SUCCESS_OK);
+    decoder.onReceiveResponseCode(
+        static_cast<std::underlying_type<HTTPResponseCode>::type>(HTTPResponseCode::SUCCESS_OK));
     while (status == HTTP2ReceiveDataStatus::SUCCESS && index < testPayload.size()) {
         auto sizeToSend = (index + bufferSize) > testPayload.size() ? testPayload.size() - index : bufferSize;
         status = decoder.onReceiveData(testPayload.c_str() + index, sizeToSend);
@@ -451,7 +454,7 @@ TEST_F(MIMEParserTest, duplicateBoundaries) {
     }
 }
 
-TEST_F(MIMEParserTest, testABORT) {
+TEST_F(MIMEParserTest, test_aBORT) {
     // setup source
     std::vector<std::string> data;
     std::vector<std::vector<std::string>> headerSets;
@@ -479,14 +482,15 @@ TEST_F(MIMEParserTest, testABORT) {
 
     // setup decoder
     HTTP2MimeResponseDecoder decoder{sink};
-    decoder.onReceiveResponseCode(HTTPResponseCode::SUCCESS_OK);
+    decoder.onReceiveResponseCode(
+        static_cast<std::underlying_type<HTTPResponseCode>::type>(HTTPResponseCode::SUCCESS_OK));
     // Ensure repeated calls return ABORT
     ASSERT_EQ(decoder.onReceiveData(encodedPayload.c_str(), SMALL), HTTP2ReceiveDataStatus::ABORT);
     sink->m_abort = false;
     ASSERT_EQ(decoder.onReceiveData(encodedPayload.c_str(), SMALL), HTTP2ReceiveDataStatus::ABORT);
 }
 
-TEST_F(MIMEParserTest, testPAUSE) {
+TEST_F(MIMEParserTest, test_pAUSE) {
     const int bufferSize{SMALL};
     std::vector<std::string> data;
     std::vector<std::vector<std::string>> headerSets;
@@ -518,7 +522,7 @@ TEST_F(MIMEParserTest, testPAUSE) {
  * We test for cases when the amount of data to be encoded/decoded from chunk varies a lot
  * between calls
  */
-TEST_F(MIMEParserTest, testVariableChunkSizes) {
+TEST_F(MIMEParserTest, test_variableChunkSizes) {
     std::vector<std::string> data;
     std::vector<std::vector<std::string>> headerSets;
     // 3 medium payloads
@@ -575,7 +579,8 @@ TEST_F(MIMEParserTest, testVariableChunkSizes) {
     HTTP2ReceiveDataStatus status{HTTP2ReceiveDataStatus::SUCCESS};
     const std::string boundaryHeader{BOUNDARY_HEADER_PREFIX + boundary};
     bool resp = decoder.onReceiveHeaderLine(boundaryHeader);
-    decoder.onReceiveResponseCode(HTTPResponseCode::SUCCESS_OK);
+    decoder.onReceiveResponseCode(
+        static_cast<std::underlying_type<HTTPResponseCode>::type>(HTTPResponseCode::SUCCESS_OK));
     ASSERT_TRUE(resp);
     while ((status == HTTP2ReceiveDataStatus::SUCCESS || status == HTTP2ReceiveDataStatus::PAUSE) &&
            index < finalSize) {
@@ -612,7 +617,8 @@ static void testPrefixCase(
     HTTP2MimeResponseDecoder decoder{sink};
 
     ASSERT_TRUE(decoder.onReceiveHeaderLine(BOUNDARY_HEADER_PREFIX + MIME_TEST_BOUNDARY_STRING));
-    ASSERT_TRUE(decoder.onReceiveResponseCode(HTTPResponseCode::SUCCESS_OK));
+    ASSERT_TRUE(decoder.onReceiveResponseCode(
+        static_cast<std::underlying_type<HTTPResponseCode>::type>(HTTPResponseCode::SUCCESS_OK)));
 
     std::string data = prefix + BOUNDARY + MIME_NEWLINE + NORMAL_LINES + MIME_BOUNDARY_DASHES;
     auto writeQuantum = data.length();
@@ -650,7 +656,7 @@ static void testPrefixCase(
     }
 }
 
-TEST_F(MIMEParserTest, testPrefixCases) {
+TEST_F(MIMEParserTest, test_prefixCases) {
     // Value used to drive testes of first chunk sizes 0 (i.e. none), 1, 2, and 3.
     static const int MAX_FIRST_CHUNK_SIZE = 3;
 

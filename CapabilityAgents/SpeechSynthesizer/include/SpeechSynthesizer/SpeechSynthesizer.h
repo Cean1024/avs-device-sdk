@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -168,6 +168,16 @@ private:
 
         /// A flag to indicate if the directive complete message has to be sent to the @c DirectiveSequencer.
         bool sendCompletedMessage;
+
+        /// A flag to indicate if setFailed() has been sent to the @c DirectiveSequencer.
+        bool isSetFailedCalled;
+
+        /// A flag to indicate if playback has been initiated.
+        bool isPlaybackInitiated;
+
+        /// A flag to indicate that a cancel was requested but not yet processed, which may happen when a cancel
+        /// was called before playback started.
+        bool isDelayedCancel;
     };
 
     /**
@@ -242,11 +252,17 @@ private:
     void executeHandle(std::shared_ptr<DirectiveInfo> info);
 
     /**
-     * Cancel execution of a SpeechSynthesizer.Speak directive (on the @c m_executor thread).
+     * Cancel execution of a SpeechSynthesizer @c Speak directive (on the @c m_executor thread).
      *
      * @param info The directive to cancel.
      */
     void executeCancel(std::shared_ptr<DirectiveInfo> info);
+
+    /**
+     * Cancel execution of a SpeechSynthesize @c Speak directive (on the @c m_executor thread).
+     * @param speakInfo The speakInfoDirective to cancel.
+     */
+    void executeCancel(std::shared_ptr<SpeakDirectiveInfo> speakInfo);
 
     /**
      * Execute a change of state (on the @c m_executor thread). If the @c m_desiredState is @c PLAYING, playing the
@@ -472,6 +488,7 @@ private:
     avsCommon::avs::FocusState m_currentFocus;
 
     /// @c SpeakDirectiveInfo instance for the @c AVSDirective currently being handled.
+    /// Serialized by only accessing it from tasks running under m_executor.
     std::shared_ptr<SpeakDirectiveInfo> m_currentInfo;
 
     /// Mutex to serialize access to m_currentState, m_desiredState, and m_waitOnStateChange.
@@ -492,15 +509,19 @@ private:
      */
     std::mutex m_speakDirectiveInfoMutex;
 
-    /// Queue which holds the directives to be processed.
+    /// Queue which holds the directives to be processed.  @c m_speakInfoQueueMutex must he acquired when
+    /// accessing or modifying this member.
     std::deque<std::shared_ptr<SpeakDirectiveInfo>> m_speakInfoQueue;
 
-    /// Serializes access to @c m_speakInfoQueue
+    /// Flag indicating if doShutdown() has been called.  @c m_speakInfoQueueMutex must he acquired when
+    /// accessing or modifying this member.
+    bool m_isShuttingDown;
+
+    /// Serializes access to @c m_speakInfoQueue.
     std::mutex m_speakInfoQueueMutex;
 
     /// This flag indicates whether the initial dialog UX State has been received.
     bool m_initialDialogUXStateReceived;
-    /// @}
 
     /// Set of capability configurations that will get published using the Capabilities API
     std::unordered_set<std::shared_ptr<avsCommon::avs::CapabilityConfiguration>> m_capabilityConfigurations;

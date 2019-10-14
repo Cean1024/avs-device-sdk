@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -148,8 +148,10 @@ public:
     }
 
     MOCK_CONST_METHOD0(getVersionString, std::string());
-    MOCK_METHOD1(handleDirective, bool(std::shared_ptr<AVSDirective> directive));
+    MOCK_METHOD4(handleDirective, bool(const std::string&, const std::string&, const std::string&, const std::string&));
     MOCK_METHOD0(doShutdown, void());
+    MOCK_METHOD1(onCallStateChange, void(bool));
+    MOCK_METHOD1(setObserver, void(std::shared_ptr<avsCommon::sdkInterfaces::RenderPlayerInfoCardsObserverInterface>));
 
     /**
      * overridden function, minus the explicit override, since gtest does not use override.
@@ -252,7 +254,7 @@ void MRMCapabilityAgentTest::TearDown() {
 /**
  * Test to verify the @c create function of @c MRMCapabilityAgent class.
  */
-TEST_F(MRMCapabilityAgentTest, createTest) {
+TEST_F(MRMCapabilityAgentTest, test_create) {
     /// A dummy MRMHandler.
     auto mrmHandler = std::unique_ptr<MRMHandlerInterface>(new MockMRMHandler());
 
@@ -273,7 +275,7 @@ TEST_F(MRMCapabilityAgentTest, createTest) {
 /**
  * Test to verify the @c getConfiguration function of @c MRMCapabilityAgent class.
  */
-TEST_F(MRMCapabilityAgentTest, getConfigurationTest) {
+TEST_F(MRMCapabilityAgentTest, test_getConfiguration) {
     auto config = m_mrmCA->getConfiguration();
     ASSERT_NE(true, config.empty());
 }
@@ -281,7 +283,7 @@ TEST_F(MRMCapabilityAgentTest, getConfigurationTest) {
 /**
  * Test to verify the @c getVersionString function of @c MRMCapabilityAgent class.
  */
-TEST_F(MRMCapabilityAgentTest, getVersionStringTest) {
+TEST_F(MRMCapabilityAgentTest, test_getVersionString) {
     EXPECT_CALL(*m_mockMRMHandlerPtr, getVersionString()).WillOnce(Return(TEST_MRM_HANDLER_VERSION_STRING));
     std::string versionString = m_mrmCA->getVersionString();
     ASSERT_NE(true, versionString.empty());
@@ -290,18 +292,18 @@ TEST_F(MRMCapabilityAgentTest, getVersionStringTest) {
 /**
  * Test to verify the @c handleDirective function of @c MRMHandler class, invoked by the @c MRMCapabilityAgent class.
  */
-TEST_F(MRMCapabilityAgentTest, handleMRMDirectiveTest) {
+TEST_F(MRMCapabilityAgentTest, test_handleMRMDirective) {
     // Create a dummy AVSDirective.
     auto directivePair = AVSDirective::create(TEST_DIRECTIVE_JSON_STRING, nullptr, "");
     std::shared_ptr<AVSDirective> directive = std::move(directivePair.first);
 
     // Test that the MRMHandler will receive the Directive and fail to handle it.
-    EXPECT_CALL(*m_mockMRMHandlerPtr, handleDirective(_)).WillOnce(Return(false));
+    EXPECT_CALL(*m_mockMRMHandlerPtr, handleDirective(_, _, _, _)).WillOnce(Return(false));
     m_mrmCA->handleDirectiveImmediately(directive);
     ASSERT_TRUE(m_exceptionSender->wait(WAIT_FOR_INVOCATION_LONG_TIMEOUT));
 
     // Test that the MRMHandler will receive the Directive and successfully handle it.
-    EXPECT_CALL(*m_mockMRMHandlerPtr, handleDirective(_)).WillOnce(Return(true));
+    EXPECT_CALL(*m_mockMRMHandlerPtr, handleDirective(_, _, _, _)).WillOnce(Return(true));
     m_mrmCA->handleDirectiveImmediately(directive);
     ASSERT_FALSE(m_exceptionSender->wait(WAIT_FOR_INVOCATION_SHORT_TIMEOUT));
 }
@@ -310,7 +312,7 @@ TEST_F(MRMCapabilityAgentTest, handleMRMDirectiveTest) {
  * Test to verify the @c onSpeakerSettingsChanged function of @c MRMHandler class, invoked by the @c MRMCapabilityAgent
  * class.
  */
-TEST_F(MRMCapabilityAgentTest, onSpeakerSettingsChangedTest) {
+TEST_F(MRMCapabilityAgentTest, test_onSpeakerSettingsChanged) {
     SpeakerInterface::SpeakerSettings dummySpeakerSettings;
 
     // Test that the AVS_ALERTS_VOLUME option works.
@@ -334,7 +336,7 @@ TEST_F(MRMCapabilityAgentTest, onSpeakerSettingsChangedTest) {
  * Test to verify the @c waitForUserInactivityReport function of @c MRMHandler class, invoked by the
  * @c MRMCapabilityAgent class.
  */
-TEST_F(MRMCapabilityAgentTest, onUserInactivityReportTest) {
+TEST_F(MRMCapabilityAgentTest, test_onUserInactivityReport) {
     // Verify that our Inactivity Report is sent by MRMHandler when invoked by the MRM CA.
     m_mrmCA->onUserInactivityReportSent();
     ASSERT_TRUE(m_mockMRMHandlerPtr->waitForUserInactivityReport(WAIT_FOR_INVOCATION_LONG_TIMEOUT));

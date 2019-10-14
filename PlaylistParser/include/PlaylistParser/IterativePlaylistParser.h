@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -21,8 +21,9 @@
 
 #include <AVSCommon/SDKInterfaces/HTTPContentFetcherInterfaceFactoryInterface.h>
 #include <AVSCommon/Utils/PlaylistParser/IterativePlaylistParserInterface.h>
+#include <AVSCommon/Utils/PlaylistParser/PlaylistEntry.h>
 
-#include "PlaylistParser/PlaylistUtils.h"
+#include "PlaylistParser/M3UParser.h"
 
 namespace alexaClientSDK {
 namespace playlistParser {
@@ -49,7 +50,7 @@ public:
     /// @name IterativePlaylistParserInterface methods.
     /// @{
     bool initializeParsing(std::string url) override;
-    PlaylistEntry next() override;
+    avsCommon::utils::playlistParser::PlaylistEntry next() override;
     void abort() override;
     /// @}
 
@@ -79,14 +80,15 @@ private:
     /// Used to retrieve content from URLs
     std::shared_ptr<avsCommon::sdkInterfaces::HTTPContentFetcherInterfaceFactoryInterface> m_contentFetcherFactory;
 
-    /// A queue with the URLs that still require parsing. This object is used to save the traversal state.
-    std::deque<UrlAndInfo> m_urlsToParse;
+    /// A queue with items to either a playlist url to parse or media info to play. This object is used to save the
+    /// traversal state.
+    std::deque<PlayItem> m_playQueue;
 
     /// A string to the last url parsed.
     std::string m_lastUrl;
 
     /// A flag used to abort an ongoing playlist parsing.
-    std::atomic_bool m_abort;
+    std::atomic<bool> m_abort;
 };
 
 }  // namespace playlistParser

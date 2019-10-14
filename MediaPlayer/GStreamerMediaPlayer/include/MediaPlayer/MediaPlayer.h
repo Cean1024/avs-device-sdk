@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -66,6 +66,7 @@ public:
      * @param enableEqualizer Flag, indicating whether equalizer should be enabled for this instance.
      * @param type The type used to categorize the speaker for volume control.
      * @param name Readable name for the new instance.
+     * @param enableLiveMode Flag, indicating if the player is in live mode.
      * @return An instance of the @c MediaPlayer if successful else a @c nullptr.
      */
     static std::shared_ptr<MediaPlayer> create(
@@ -74,8 +75,8 @@ public:
         bool enableEqualizer = false,
         avsCommon::sdkInterfaces::SpeakerInterface::Type type =
             avsCommon::sdkInterfaces::SpeakerInterface::Type::AVS_SPEAKER_VOLUME,
-        std::string name = "");
-
+        std::string name = "",
+        bool enableLiveMode = false);
     /**
      * Destructor.
      */
@@ -87,8 +88,10 @@ public:
         std::shared_ptr<avsCommon::avs::attachment::AttachmentReader> attachmentReader,
         const avsCommon::utils::AudioFormat* format = nullptr) override;
     SourceId setSource(std::shared_ptr<std::istream> stream, bool repeat) override;
-    SourceId setSource(const std::string& url, std::chrono::milliseconds offset = std::chrono::milliseconds::zero())
-        override;
+    SourceId setSource(
+        const std::string& url,
+        std::chrono::milliseconds offset = std::chrono::milliseconds::zero(),
+        bool repeat = false) override;
 
     bool play(SourceId id) override;
     bool stop(SourceId id) override;
@@ -198,13 +201,14 @@ private:
      * @param enableEqualizer Flag, indicating whether equalizer should be enabled for this instance.
      * @param type The type used to categorize the speaker for volume control.
      * @param name Readable name of this instance.
+     * @param enableLiveMode Flag, indicating the player is in live mode
      */
     MediaPlayer(
         std::shared_ptr<avsCommon::sdkInterfaces::HTTPContentFetcherInterfaceFactoryInterface> contentFetcherFactory,
         bool enableEqualizer,
         avsCommon::sdkInterfaces::SpeakerInterface::Type type,
-        std::string name);
-
+        std::string name,
+        bool enableLiveMode);
     /**
      * The worker loop to run the glib mainloop.
      */
@@ -309,11 +313,13 @@ private:
      * @param reader The @c AttachmentReader with which to receive the audio to play.
      * @param promise A promise to fulfill with a @c SourceId value once the source has been set.
      * @param audioFormat The audioFormat to be used to interpret raw audio data.
+     * @param repeat An optional parameter to indicate whether to play from the source in a loop.
      */
     void handleSetAttachmentReaderSource(
         std::shared_ptr<avsCommon::avs::attachment::AttachmentReader> reader,
         std::promise<SourceId>* promise,
-        const avsCommon::utils::AudioFormat* audioFormat = nullptr);
+        const avsCommon::utils::AudioFormat* audioFormat = nullptr,
+        bool repeat = false);
 
     /**
      * Worker thread handler for setting the source of audio to play.
@@ -321,8 +327,13 @@ private:
      * @param url The url to set as the source.
      * @param offset The offset from which to start streaming from.
      * @param promise A promise to fulfill with a @c SourceId value once the source has been set.
+     * @param repeat A parameter to indicate whether to play from the url source in a loop.
      */
-    void handleSetUrlSource(const std::string& url, std::chrono::milliseconds offset, std::promise<SourceId>* promise);
+    void handleSetUrlSource(
+        const std::string& url,
+        std::chrono::milliseconds offset,
+        std::promise<SourceId>* promise,
+        bool repeat);
 
     /**
      * Worker thread handler for setting the source of audio to play.
@@ -513,9 +524,11 @@ private:
     static gboolean onErrorCallback(gpointer pointer);
 
     /**
-     * Save offset of stream before we teardown the pipeline.
+     * Get the current offset of the stream.
+     *
+     * @return The current stream offset in milliseconds.
      */
-    void saveOffsetBeforeTeardown();
+    std::chrono::milliseconds getCurrentStreamOffset();
 
     /**
      * Destructs the @c m_source with proper steps.
@@ -608,6 +621,9 @@ private:
 
     /// Stream offset before we teardown the pipeline
     std::chrono::milliseconds m_offsetBeforeTeardown;
+
+    /// Flag to indicate if the player is in live mode.
+    const bool m_isLiveMode;
 };
 
 }  // namespace mediaPlayer

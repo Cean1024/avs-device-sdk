@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -330,45 +330,6 @@ static bool supportsAvsProfile(std::shared_ptr<BluetoothDeviceInterface> device,
 }
 
 /**
- * TODO: Move this to MacAddressString class.
- * Utility function to truncate a valid MAC address. The first 8 octets are X'd out.
- *
- * @param mac The untruncated MAC address.
- * @param[out] truncatedMac The truncated MAC address.
- * @return The truncated mac address if successful, otherwise the original string.
- */
-static bool truncate(const std::string& mac, std::string* truncatedMac) {
-    // The expected size of a MAC address in the format XX:XX:XX:XX:XX:XX.
-    const unsigned int MAC_SIZE = 17;
-
-    // Not a valid mac string, return.
-    if (!MacAddressString::create(mac)) {
-        ACSDK_ERROR(LX(__func__).d("reason", "invalidMac"));
-        return false;
-    } else if (mac.length() != MAC_SIZE) {
-        ACSDK_ERROR(LX(__func__).d("reason", "invalidMac"));
-        return false;
-    } else if (!truncatedMac) {
-        ACSDK_ERROR(LX(__func__).d("reason", "nullTruncatedMac"));
-        return false;
-    }
-
-    *truncatedMac = mac;
-
-    char X = 'X';
-    truncatedMac->at(0) = X;
-    truncatedMac->at(1) = X;
-    truncatedMac->at(3) = X;
-    truncatedMac->at(4) = X;
-    truncatedMac->at(6) = X;
-    truncatedMac->at(7) = X;
-    truncatedMac->at(9) = X;
-    truncatedMac->at(10) = X;
-
-    return true;
-}
-
-/**
  * Utility function to extract AVS compliant profiles. This returns a rapidjson node
  * containing an array of supported profiles.
  *
@@ -542,18 +503,21 @@ DirectiveHandlerConfiguration Bluetooth::getConfiguration() const {
     ACSDK_DEBUG5(LX(__func__));
 
     DirectiveHandlerConfiguration configuration;
-    configuration[SCAN_DEVICES] = BlockingPolicy::NON_BLOCKING;
-    configuration[ENTER_DISCOVERABLE_MODE] = BlockingPolicy::NON_BLOCKING;
-    configuration[EXIT_DISCOVERABLE_MODE] = BlockingPolicy::NON_BLOCKING;
-    configuration[PAIR_DEVICE] = BlockingPolicy::NON_BLOCKING;
-    configuration[UNPAIR_DEVICE] = BlockingPolicy::NON_BLOCKING;
-    configuration[CONNECT_BY_DEVICE_ID] = BlockingPolicy::NON_BLOCKING;
-    configuration[CONNECT_BY_PROFILE] = BlockingPolicy::NON_BLOCKING;
-    configuration[DISCONNECT_DEVICE] = BlockingPolicy::NON_BLOCKING;
-    configuration[PLAY] = BlockingPolicy::NON_BLOCKING;
-    configuration[STOP] = BlockingPolicy::NON_BLOCKING;
-    configuration[NEXT] = BlockingPolicy::NON_BLOCKING;
-    configuration[PREVIOUS] = BlockingPolicy::NON_BLOCKING;
+    auto audioNonBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+    auto neitherNonBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUMS_NONE, false);
+
+    configuration[SCAN_DEVICES] = neitherNonBlockingPolicy;
+    configuration[ENTER_DISCOVERABLE_MODE] = neitherNonBlockingPolicy;
+    configuration[EXIT_DISCOVERABLE_MODE] = neitherNonBlockingPolicy;
+    configuration[PAIR_DEVICE] = neitherNonBlockingPolicy;
+    configuration[UNPAIR_DEVICE] = neitherNonBlockingPolicy;
+    configuration[CONNECT_BY_DEVICE_ID] = neitherNonBlockingPolicy;
+    configuration[CONNECT_BY_PROFILE] = neitherNonBlockingPolicy;
+    configuration[DISCONNECT_DEVICE] = neitherNonBlockingPolicy;
+    configuration[PLAY] = audioNonBlockingPolicy;
+    configuration[STOP] = audioNonBlockingPolicy;
+    configuration[NEXT] = audioNonBlockingPolicy;
+    configuration[PREVIOUS] = audioNonBlockingPolicy;
 
     return configuration;
 }
@@ -599,6 +563,8 @@ void Bluetooth::doShutdown() {
 
     m_deviceManager.reset();
     m_eventBus.reset();
+
+    m_observers.clear();
 }
 
 std::unordered_set<std::shared_ptr<avsCommon::avs::CapabilityConfiguration>> Bluetooth::getCapabilityConfigurations() {
@@ -901,9 +867,12 @@ void Bluetooth::executeEnterForeground() {
         case StreamingState::PENDING_PAUSED:
         case StreamingState::PAUSED:
         case StreamingState::INACTIVE:
-            // We push a play because some devices do not auto start playback next/previous command.
-            m_cmdQueue.push_front(AVRCPCommand::PLAY);
-            executeDrainQueue();
+            // We push a play when the BT CA has been backgrounded because some devices do not
+            // auto start playback next/previous command.
+            if (m_focusState == FocusState::BACKGROUND) {
+                m_cmdQueue.push_front(AVRCPCommand::PLAY);
+                executeDrainQueue();
+            }
             if (m_mediaStream == nullptr) {
                 executeInitializeMediaSource();
             }
@@ -1357,9 +1326,15 @@ bool Bluetooth::executeUnpairDevice(const std::string& uuid) {
         return false;
     }
 
+    // If the device is connected, disconnect it before unpairing
+    if (device->isConnected()) {
+        executeDisconnectDevice(uuid);
+    }
+
     if (executeFunctionOnDevice(device, &BluetoothDeviceInterface::unpair)) {
         m_lastPairMac.clear();
         m_activeDevice.reset();
+
         executeSendUnpairDeviceSucceeded(device);
         return true;
     } else {
@@ -1438,11 +1413,24 @@ void Bluetooth::executeConnectByProfile(const std::string& profileName, const st
 void Bluetooth::executeOnDeviceConnect(std::shared_ptr<BluetoothDeviceInterface> device) {
     ACSDK_DEBUG5(LX(__func__));
 
+    // Currently there is an active device. Disconnect it since the new device will have priority.
     if (m_activeDevice) {
-        ACSDK_WARN(LX(__func__).d("reason", "activeDeviceExists"));
+        ACSDK_DEBUG(LX(__func__).d("reason", "activeDeviceExists"));
+        if (m_activeDevice->disconnect().get()) {
+            executeOnDeviceDisconnect(Requester::DEVICE);
+        } else {
+            // Failed to disconnect activeDevice, user will have to manually disconnect the device.
+            ACSDK_ERROR(
+                LX(__func__).d("reason", "disconnectExistingActiveDeviceFailed").d("mac", m_activeDevice->getMac()));
+        }
     }
 
     m_activeDevice = device;
+
+    // Notify observers when a bluetooth device is connected.
+    for (const auto& observer : m_observers) {
+        observer->onActiveDeviceConnected(generateDeviceAttributes(m_activeDevice));
+    }
 
     std::string uuid;
     if (!retrieveUuid(device->getMac(), &uuid)) {
@@ -1474,6 +1462,12 @@ void Bluetooth::executeOnDeviceDisconnect(avsCommon::avs::Requester requester) {
     }
 
     auto device = m_activeDevice;
+
+    // Notify observers when a bluetooth device is disconnected.
+    for (const auto& observer : m_observers) {
+        observer->onActiveDeviceDisconnected(generateDeviceAttributes(m_activeDevice));
+    }
+
     m_activeDevice.reset();
     executeSendDisconnectDeviceSucceeded(device, requester);
 }
@@ -1677,9 +1671,11 @@ void Bluetooth::executeSendScanDevicesUpdated(
         deviceJson.AddMember(UNIQUE_DEVICE_ID_KEY, uuid, payload.GetAllocator());
         deviceJson.AddMember(FRIENDLY_NAME_KEY, device->getFriendlyName(), payload.GetAllocator());
 
-        std::string truncatedMac;
-        if (truncate(device->getMac(), &truncatedMac)) {
-            deviceJson.AddMember(TRUNCATED_MAC_ADDRESS_KEY, truncatedMac, payload.GetAllocator());
+        std::unique_ptr<MacAddressString> mac = MacAddressString::create(device->getMac());
+        if (mac) {
+            deviceJson.AddMember(TRUNCATED_MAC_ADDRESS_KEY, mac->getTruncatedString(), payload.GetAllocator());
+        } else {
+            ACSDK_ERROR(LX("appendingMacAddressFailed").d("reason", "invalidFormat"));
         }
 
         devicesArray.PushBack(deviceJson, payload.GetAllocator());
@@ -1958,7 +1954,7 @@ void Bluetooth::executeSendMediaControlNextSucceeded() {
 }
 
 void Bluetooth::executeSendMediaControlNextFailed() {
-    executeQueueEventAndRequestContext(MEDIA_CONTROL_NEXT_SUCCEEDED.name, EMPTY_PAYLOAD);
+    executeQueueEventAndRequestContext(MEDIA_CONTROL_NEXT_FAILED.name, EMPTY_PAYLOAD);
 }
 
 void Bluetooth::executeSendMediaControlPreviousSucceeded() {
@@ -2071,6 +2067,34 @@ void Bluetooth::setCurrentStream(std::shared_ptr<avsCommon::utils::bluetooth::Fo
     }
 }
 
+void Bluetooth::addObserver(std::shared_ptr<ObserverInterface> observer) {
+    if (!observer) {
+        ACSDK_ERROR(LX("addObserverFailed").d("reason", "nullObserver"));
+        return;
+    }
+    m_executor.submit([this, observer]() { m_observers.insert(observer); });
+}
+
+void Bluetooth::removeObserver(std::shared_ptr<ObserverInterface> observer) {
+    if (!observer) {
+        ACSDK_ERROR(LX("removeObserverFailed").d("reason", "nullObserver"));
+        return;
+    }
+    m_executor.submit([this, observer]() { m_observers.erase(observer); });
+}
+
+Bluetooth::ObserverInterface::DeviceAttributes Bluetooth::generateDeviceAttributes(
+    std::shared_ptr<alexaClientSDK::avsCommon::sdkInterfaces::bluetooth::BluetoothDeviceInterface> device) {
+    BluetoothDeviceObserverInterface::DeviceAttributes deviceAttributes;
+
+    deviceAttributes.name = device->getFriendlyName();
+    for (const auto& supportedServices : device->getSupportedServices()) {
+        deviceAttributes.supportedServices.insert(supportedServices->getName());
+    }
+
+    return deviceAttributes;
+}
+
 // Conceptually these are actions that are initiated by the peer device.
 void Bluetooth::onEventFired(const avsCommon::utils::bluetooth::BluetoothEvent& event) {
     ACSDK_DEBUG5(LX(__func__));
@@ -2133,8 +2157,7 @@ void Bluetooth::onEventFired(const avsCommon::utils::bluetooth::BluetoothEvent& 
                     m_executor.submit([this, device] {
                         if (!supportsAvsProfile(device, AVS_A2DP)) {
                             /*
-                             * This shouldn't be possible but we add the check in in case we
-                             * missed any edge cases. We will attempt to disconnect,
+                             * This device does not support A2DP. We will attempt to disconnect,
                              * AVS won't be made aware of it, and if unsuccessful, it is up to the
                              * user/client to disconnect.
                              */
@@ -2154,9 +2177,16 @@ void Bluetooth::onEventFired(const avsCommon::utils::bluetooth::BluetoothEvent& 
 
                             return;
                         }
-
-                        if (!m_activeDevice) {
+                        /*
+                         * Otherwise set the device as the new active device. We don't need to call connect()
+                         * again because the device is already connected from the Bluetooth stack's perspective.
+                         */
+                        else if (device != m_activeDevice) {
                             executeOnDeviceConnect(device);
+                            /*
+                             * Default to sending a ConnectByDeviceId event since this wasn't a result of a profile
+                             * specific connection.
+                             */
                             executeSendConnectByDeviceIdSucceeded(device, Requester::DEVICE);
                         }
                     });

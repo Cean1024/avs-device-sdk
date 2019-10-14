@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ namespace utils {
 namespace libcurlUtils {
 
 using namespace avsCommon::utils::http2;
+using namespace avsCommon::utils::libcurlUtils;
 
 /// String to identify log entries originating from this file.
 static const std::string TAG("LibcurlHTTP2Connection");

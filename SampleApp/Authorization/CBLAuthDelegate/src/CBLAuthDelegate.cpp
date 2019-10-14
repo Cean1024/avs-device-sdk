@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@
 
 #include <AVSCommon/AVS/Initialization/AlexaClientSDKInit.h>
 #include <AVSCommon/Utils/DeviceInfo.h>
+#include <AVSCommon/Utils/HTTP/HttpResponseCode.h>
 #include <AVSCommon/Utils/LibcurlUtils/HttpPost.h>
-#include <AVSCommon/Utils/LibcurlUtils/HttpResponseCodes.h>
 #include <AVSCommon/Utils/Logger/Logger.h>
 
 #include "CBLAuthDelegate/CBLAuthDelegate.h"
@@ -38,6 +38,7 @@ namespace authorization {
 namespace cblAuthDelegate {
 
 using namespace alexaClientSDK::avsCommon::sdkInterfaces;
+using namespace alexaClientSDK::avsCommon::utils::http;
 using namespace alexaClientSDK::avsCommon::utils::libcurlUtils;
 using namespace alexaClientSDK::registrationManager;
 using namespace rapidjson;
@@ -204,11 +205,11 @@ static AuthObserverInterface::Error mapHTTPCodeToError(long code) {
             error = AuthObserverInterface::Error::SUCCESS;
             break;
 
-        case HTTPResponseCode::BAD_REQUEST:
+        case HTTPResponseCode::CLIENT_ERROR_BAD_REQUEST:
             error = AuthObserverInterface::Error::INVALID_REQUEST;
             break;
 
-        case HTTPResponseCode::SERVER_INTERNAL_ERROR:
+        case HTTPResponseCode::SERVER_ERROR_INTERNAL:
             error = AuthObserverInterface::Error::SERVER_ERROR;
             break;
 
@@ -667,13 +668,12 @@ avsCommon::utils::libcurlUtils::HTTPResponse CBLAuthDelegate::requestRefresh() {
     auto timeout = m_configuration->getRequestTimeout();
     if (AuthObserverInterface::State::REFRESHED == m_authState) {
         auto timeUntilExpired = std::chrono::duration_cast<std::chrono::seconds>(m_tokenExpirationTime - m_requestTime);
-        if (timeout > timeUntilExpired) {
+        if ((timeout > timeUntilExpired) && (timeUntilExpired > std::chrono::seconds::zero())) {
             timeout = timeUntilExpired;
         }
     }
 
-    return m_httpPost->doPost(
-        m_configuration->getRequestTokenUrl(), headerLines, postData, m_configuration->getRequestTimeout());
+    return m_httpPost->doPost(m_configuration->getRequestTokenUrl(), headerLines, postData, timeout);
 }
 
 AuthObserverInterface::Error CBLAuthDelegate::receiveCodePairResponse(const HTTPResponse& response) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -57,7 +57,7 @@ static const std::string ENDPOINT_PAYLOAD = "{\"" + ENDPOINT_PAYLOAD_KEY + "\": 
 static const std::string ENDPOINTING_MESSAGE_ID = "ABC123DEF";
 
 /// This is the condition variable to be used to control the exit of the test case.
-std::condition_variable exitTrigger;
+static std::condition_variable conditionVariable;
 
 /**
  * Helper function to check if the incoming endpoint is the one we prescribed.
@@ -67,7 +67,7 @@ std::condition_variable exitTrigger;
  */
 static bool checkIncomingEndpoint(const std::string& endpoint) {
     std::cout << "Incoming endpoint: " << endpoint << std::endl;
-    exitTrigger.notify_all();
+    conditionVariable.notify_all();
     return ENDPOINT_PAYLOAD_VALUE == endpoint;
 }
 
@@ -92,14 +92,14 @@ void EndpointHandlerTest::SetUp() {
 /**
  * This case tests if @c EndpointHandler basic create function works properly
  */
-TEST_F(EndpointHandlerTest, createSuccessfully) {
+TEST_F(EndpointHandlerTest, test_createSuccessfully) {
     ASSERT_NE(nullptr, EndpointHandler::create(m_mockAVSEndpointAssigner, m_mockExceptionEncounteredSender));
 }
 
 /**
  * This case tests if possible @c nullptr parameters passed to @c EndpointHandler::create are handled properly.
  */
-TEST_F(EndpointHandlerTest, createWithError) {
+TEST_F(EndpointHandlerTest, test_createWithError) {
     ASSERT_EQ(nullptr, EndpointHandler::create(m_mockAVSEndpointAssigner, nullptr));
     ASSERT_EQ(nullptr, EndpointHandler::create(nullptr, m_mockExceptionEncounteredSender));
     ASSERT_EQ(nullptr, EndpointHandler::create(nullptr, nullptr));
@@ -108,7 +108,7 @@ TEST_F(EndpointHandlerTest, createWithError) {
 /**
  * This case tests if a directive is handled properly.
  */
-TEST_F(EndpointHandlerTest, handleDirectiveProperly) {
+TEST_F(EndpointHandlerTest, test_handleDirectiveProperly) {
     auto endpointHandler = EndpointHandler::create(m_mockAVSEndpointAssigner, m_mockExceptionEncounteredSender);
     ASSERT_NE(nullptr, endpointHandler);
 
@@ -125,7 +125,7 @@ TEST_F(EndpointHandlerTest, handleDirectiveProperly) {
     std::unique_lock<std::mutex> exitLock(exitMutex);
     EXPECT_CALL(*m_mockAVSEndpointAssigner, setAVSEndpoint(ResultOf(&checkIncomingEndpoint, Eq(true))));
     directiveSequencer->onDirective(endpointDirective);
-    exitTrigger.wait_for(exitLock, std::chrono::seconds(2));
+    conditionVariable.wait_for(exitLock, std::chrono::seconds(2));
     directiveSequencer->shutdown();
 }
 

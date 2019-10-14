@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -25,31 +25,6 @@
 namespace alexaClientSDK {
 namespace playlistParser {
 
-/// A struct to contain a URL encountered in a playlist and metadata surrounding it.
-struct UrlAndInfo {
-    std::string url;
-    std::chrono::milliseconds length;
-};
-
-/// A struct used to encapsulate information retrieved from an M3U playlist.
-struct M3UContent {
-    std::vector<UrlAndInfo> childrenUrls;
-    bool endlistTagPresent;
-    bool streamInfTagPresent;
-    M3UContent() : endlistTagPresent{false}, streamInfTagPresent{false} {};
-};
-
-/// Timeout for future ready.
-static const std::chrono::milliseconds WAIT_FOR_FUTURE_READY_TIMEOUT(100);
-
-/**
- * Parses an M3U playlist and returns the "children" URLs in the order they appeared in the playlist.
- *
- * @param content The content to parse.
- * @return A vector of URLs and their relevant metadata in the order they appeared in the playlist.
- */
-M3UContent parseM3UContent(const std::string& playlistURL, const std::string& content);
-
 /**
  * Parses an PLS playlist and returns the "children" URLs in the order they appeared in the playlist.
  *
@@ -57,14 +32,6 @@ M3UContent parseM3UContent(const std::string& playlistURL, const std::string& co
  * @return A vector of URLs in the order they appeared in the playlist.
  */
 std::vector<std::string> parsePLSContent(const std::string& playlistURL, const std::string& content);
-
-/**
- * Determines the playlist type of an M3U playlist.
- *
- * @param playlistContent The M3U playlist in @c std::string format.
- * @return @c true if the playlist is extended M3U or @c false otherwise
- */
-bool isPlaylistExtendedM3U(const std::string& playlistContent);
 
 /**
  * Removes a carriage return from the end of a line. This is required to handle Windows style line breaks ('\r\n').
@@ -77,13 +44,17 @@ void removeCarriageReturnFromLine(std::string* line);
 /**
  * Retrieves playlist content and stores it into a string.
  *
- * @param httpContent Object used to retrieve url content.
+ * @param contentFetcher Object used to retrieve url content.
  * @param [out] content The playlist content.
+ * @param shouldShutDown A pointer to allow for the caller to cancel the content retrieval asynchronously
  * @return @c true if no error occured or @c false otherwise.
  * @note This function should be used to retrieve content specifically from playlist URLs. Attempting to use this
  * on a media URL could be blocking forever as the URL might point to a live stream.
  */
-bool extractPlaylistContent(std::unique_ptr<avsCommon::utils::HTTPContent> httpContent, std::string* content);
+bool readFromContentFetcher(
+    std::unique_ptr<avsCommon::sdkInterfaces::HTTPContentFetcherInterface> contentFetcher,
+    std::string* content,
+    std::atomic<bool>* shouldShutDown);
 
 /**
  * Determines whether the provided url is an absolute url as opposed to a relative url. This is done by simply
@@ -105,15 +76,6 @@ bool isURLAbsolute(const std::string& url);
  * @return @c true If everything was successful and @c false otherwise.
  */
 bool getAbsoluteURLFromRelativePathToURL(std::string baseURL, std::string relativePath, std::string* absoluteURL);
-
-/**
- * Used to parse the time length out of a playlist entry metadata line that starts with #EXTINF.
- *
- * @param line The line to parse.
- * @return The time length of the entry or @c PlaylistParserObserverInterface::INVALID_DURATION if the time length
- * was unable to be parsed.
- */
-std::chrono::milliseconds parseRuntime(std::string line);
 
 }  // namespace playlistParser
 }  // namespace alexaClientSDK

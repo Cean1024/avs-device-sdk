@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 
 #include <AVSCommon/Utils/Memory/Memory.h>
 
-#include "PlaylistParser/MockContentFetcher.h"
 #include "PlaylistParser/IterativePlaylistParser.h"
+#include "PlaylistParser/MockContentFetcher.h"
 
 namespace alexaClientSDK {
 namespace playlistParser {
@@ -114,63 +114,56 @@ void IterativePlaylistParserTest::testPlaylist(const std::string& url, const std
 /**
  * Tests initialize failure due to an empty playlist url.
  */
-TEST_F(IterativePlaylistParserTest, testInitializeFailed) {
+TEST_F(IterativePlaylistParserTest, test_initializeFailed) {
     EXPECT_FALSE(m_parser->initializeParsing(""));
 }
 
 /**
  * Tests successful initialization with non-empty url.
  */
-TEST_F(IterativePlaylistParserTest, testInitializeOk) {
+TEST_F(IterativePlaylistParserTest, test_initializeOk) {
     EXPECT_TRUE(m_parser->initializeParsing(TEST_M3U_PLAYLIST_URL));
 }
 
 /**
  * Tests parsing of a simple M3U playlist.
  */
-TEST_F(IterativePlaylistParserTest, testParsingPlaylist) {
+TEST_F(IterativePlaylistParserTest, test_parsingPlaylist) {
     testPlaylist(TEST_M3U_PLAYLIST_URL, TEST_M3U_PLAYLIST_URLS, TEST_M3U_DURATIONS);
 }
 
 /**
  * Tests parsing of an extended M3U/HLS playlist.
  */
-TEST_F(IterativePlaylistParserTest, testParsingHlsPlaylist) {
+TEST_F(IterativePlaylistParserTest, test_parsingHlsPlaylist) {
     testPlaylist(TEST_HLS_PLAYLIST_URL, TEST_HLS_PLAYLIST_URLS, TEST_HLS_DURATIONS);
 }
 
 /**
  * Tests parsing of a PLS playlist.
  */
-TEST_F(IterativePlaylistParserTest, testParsingPlsPlaylist) {
+TEST_F(IterativePlaylistParserTest, test_parsingPlsPlaylist) {
     testPlaylist(TEST_PLS_PLAYLIST_URL, TEST_PLS_PLAYLIST_URLS);
 }
 
 /**
  * Tests parsing of a simple M3U playlist with relative urls.
  */
-TEST_F(IterativePlaylistParserTest, testParsingRelativePlaylist) {
+TEST_F(IterativePlaylistParserTest, test_parsingRelativePlaylist) {
     testPlaylist(TEST_M3U_RELATIVE_PLAYLIST_URL, TEST_M3U_RELATIVE_PLAYLIST_URLS);
-}
-
-/**
- * Tests parsing of a recursive M3U/HLS playlist.
- */
-TEST_F(IterativePlaylistParserTest, testParsingRecursiveHlsPlaylist) {
-    testPlaylist(TEST_HLS_RECURSIVE_PLAYLIST_URL, TEST_HLS_RECURSIVE_PLAYLIST_URLS);
 }
 
 /**
  * Tests parsing of a live stream HLS playlist.
  */
-TEST_F(IterativePlaylistParserTest, testParsingLiveStreamPlaylist) {
+TEST_F(IterativePlaylistParserTest, test_parsingLiveStreamPlaylist) {
     testPlaylist(TEST_HLS_LIVE_STREAM_PLAYLIST_URL, TEST_HLS_LIVE_STREAM_PLAYLIST_URLS, TEST_HLS_LIVE_STREAM_DURATIONS);
 }
 
 /**
  * Test parsing a media url. We expect the media to be the unique url.
  */
-TEST_F(IterativePlaylistParserTest, testParseMediaUrl) {
+TEST_F(IterativePlaylistParserTest, test_parseMediaUrl) {
     EXPECT_TRUE(m_parser->initializeParsing(TEST_MEDIA_URL));
 
     auto entry = m_parser->next();
@@ -181,7 +174,7 @@ TEST_F(IterativePlaylistParserTest, testParseMediaUrl) {
 /**
  * Test parsing a invalid url.
  */
-TEST_F(IterativePlaylistParserTest, testParseInvalidUrl) {
+TEST_F(IterativePlaylistParserTest, test_parseInvalidUrl) {
     const std::string invalidUrl = "http://invalid.url";
     EXPECT_TRUE(m_parser->initializeParsing(invalidUrl));
 
@@ -192,12 +185,12 @@ TEST_F(IterativePlaylistParserTest, testParseInvalidUrl) {
 /**
  * Test calling @c next() after abort parsing.
  */
-TEST_F(IterativePlaylistParserTest, testNextFailsAfterAbort) {
+TEST_F(IterativePlaylistParserTest, test_nextFailsAfterAbort) {
     EXPECT_TRUE(m_parser->initializeParsing(TEST_M3U_PLAYLIST_URL));
     m_parser->abort();
 
     auto entry = m_parser->next();
-    auto expectedDuration = PlaylistParserObserverInterface::INVALID_DURATION;
+    auto expectedDuration = std::chrono::milliseconds(-1);
     EXPECT_EQ(entry.parseResult, PlaylistParseResult::ERROR);
     EXPECT_EQ(entry.url, "");
     EXPECT_EQ(entry.duration, expectedDuration);

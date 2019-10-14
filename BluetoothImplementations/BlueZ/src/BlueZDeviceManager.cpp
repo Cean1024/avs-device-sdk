@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -161,6 +161,9 @@ bool BlueZDeviceManager::init() {
 
     ACSDK_DEBUG5(LX("BlueZDeviceManager initialized..."));
 
+    BluetoothDeviceManagerInitializedEvent event;
+    m_eventBus->sendEvent(event);
+
     return true;
 }
 
@@ -233,6 +236,7 @@ std::shared_ptr<BlueZBluetoothDevice> BlueZDeviceManager::getDeviceByPath(const 
 }
 
 void BlueZDeviceManager::onMediaStreamPropertyChanged(const std::string& path, const GVariantMapReader& changesMap) {
+    ACSDK_DEBUG7(LX(__func__).d("path", path));
     const std::string FD_KEY = "/fd";
 
     // Get device path without the /fd<number>
@@ -266,20 +270,23 @@ void BlueZDeviceManager::onMediaStreamPropertyChanged(const std::string& path, c
     ACSDK_DEBUG5(LX(__func__).d("mediaStreamUuid", uuid));
 
     char* newStateStr;
-    avsCommon::utils::bluetooth::MediaStreamingState newState;
-    if (changesMap.getCString(MEDIATRANSPORT_PROPERTY_STATE, &newStateStr)) {
-        ACSDK_DEBUG5(LX("Media transport state changed").d("newState", newStateStr));
+    if (!changesMap.getCString(MEDIATRANSPORT_PROPERTY_STATE, &newStateStr)) {
+        ACSDK_DEBUG5(LX("mediaTransportStateUnchanged").d("action", "ignoringCallback"));
+        return;
+    }
 
-        if (STATE_ACTIVE == newStateStr) {
-            newState = avsCommon::utils::bluetooth::MediaStreamingState::ACTIVE;
-        } else if (STATE_PENDING == newStateStr) {
-            newState = avsCommon::utils::bluetooth::MediaStreamingState::PENDING;
-        } else if (STATE_IDLE == newStateStr) {
-            newState = avsCommon::utils::bluetooth::MediaStreamingState::IDLE;
-        } else {
-            ACSDK_ERROR(LX("onMediaStreamPropertyChangedFailed").d("Unknown state", newStateStr));
-            return;
-        }
+    ACSDK_DEBUG5(LX("mediaTransportStateChanged").d("newState", newStateStr));
+
+    MediaStreamingState newState = MediaStreamingState::IDLE;
+    if (STATE_ACTIVE == newStateStr) {
+        newState = MediaStreamingState::ACTIVE;
+    } else if (STATE_PENDING == newStateStr) {
+        newState = MediaStreamingState::PENDING;
+    } else if (STATE_IDLE == newStateStr) {
+        newState = MediaStreamingState::IDLE;
+    } else {
+        ACSDK_ERROR(LX("onMediaStreamPropertyChangedFailed").d("unknownState", newStateStr));
+        return;
     }
 
     if (A2DPSourceInterface::UUID == uuid) {

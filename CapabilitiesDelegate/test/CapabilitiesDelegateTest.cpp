@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 #include <rapidjson/writer.h>
 
 #include <AVSCommon/AVS/Initialization/AlexaClientSDKInit.h>
-#include <AVSCommon/Utils/LibcurlUtils/HttpResponseCodes.h>
+#include <AVSCommon/Utils/HTTP/HttpResponseCode.h>
 #include "Common/TestableAuthDelegate.h"
 #include "Common/TestableCapabilityProvider.h"
 #include "Common/TestableHttpPut.h"
@@ -36,6 +36,7 @@ using namespace avsCommon::avs;
 using namespace avsCommon::avs::initialization;
 using namespace avsCommon::sdkInterfaces;
 using namespace avsCommon::utils;
+using namespace avsCommon::utils::http;
 using namespace avsCommon::utils::configuration;
 using namespace avsCommon::utils::libcurlUtils;
 
@@ -340,7 +341,7 @@ std::unordered_map<std::string, std::shared_ptr<CapabilityConfiguration>> Capabi
 }
 
 /// Test publishing no capabilities
-TEST_F(CapabilitiesDelegateTest, noCapability) {
+TEST_F(CapabilitiesDelegateTest, test_noCapability) {
     ASSERT_EQ(
         m_capabilitiesDelegate->publishCapabilities(),
         CapabilitiesDelegate::CapabilitiesPublishReturnCode::FATAL_ERROR);
@@ -349,7 +350,7 @@ TEST_F(CapabilitiesDelegateTest, noCapability) {
 }
 
 /// Test publishing capabilities with no errors
-TEST_F(CapabilitiesDelegateTest, withCapabilitiesHappyCase) {
+TEST_F(CapabilitiesDelegateTest, test_withCapabilitiesHappyCase) {
     std::shared_ptr<TestCapabilityProvider> capabilityProviderOne = std::make_shared<TestCapabilityProvider>();
     capabilityProviderOne->addCapabilityConfiguration(INTERFACE_TYPE, INTERFACE_NAME_ONE, INTERFACE_VERSION);
     capabilityProviderOne->addCapabilityConfiguration(INTERFACE_TYPE, INTERFACE_NAME_THREE, INTERFACE_VERSION);
@@ -426,12 +427,12 @@ TEST_F(CapabilitiesDelegateTest, withCapabilitiesHappyCase) {
 }
 
 /// Test publishing capabilities that returns a fatal error
-TEST_F(CapabilitiesDelegateTest, publishFatalError) {
+TEST_F(CapabilitiesDelegateTest, test_publishFatalError) {
     std::shared_ptr<TestCapabilityProvider> capabilityProvider = std::make_shared<TestCapabilityProvider>();
     capabilityProvider->addCapabilityConfiguration(INTERFACE_TYPE, INTERFACE_NAME_ONE, INTERFACE_VERSION);
 
     ASSERT_TRUE(m_capabilitiesDelegate->registerCapability(capabilityProvider));
-    m_httpPut->setResponseCode(HTTPResponseCode::BAD_REQUEST);  /// Fatal error
+    m_httpPut->setResponseCode(HTTPResponseCode::CLIENT_ERROR_BAD_REQUEST);  /// Fatal error
     ASSERT_EQ(
         m_capabilitiesDelegate->publishCapabilities(),
         CapabilitiesDelegate::CapabilitiesPublishReturnCode::FATAL_ERROR);
@@ -440,12 +441,12 @@ TEST_F(CapabilitiesDelegateTest, publishFatalError) {
 }
 
 /// Test publishing capabilities that returns a retriable error
-TEST_F(CapabilitiesDelegateTest, publishRetriableError) {
+TEST_F(CapabilitiesDelegateTest, test_publishRetriableError) {
     std::shared_ptr<TestCapabilityProvider> capabilityProvider = std::make_shared<TestCapabilityProvider>();
     capabilityProvider->addCapabilityConfiguration(INTERFACE_TYPE, INTERFACE_NAME_ONE, INTERFACE_VERSION);
 
     ASSERT_TRUE(m_capabilitiesDelegate->registerCapability(capabilityProvider));
-    m_httpPut->setResponseCode(HTTPResponseCode::SERVER_INTERNAL_ERROR);  /// Retriable error
+    m_httpPut->setResponseCode(HTTPResponseCode::SERVER_ERROR_INTERNAL);  /// Retriable error
     ASSERT_EQ(
         m_capabilitiesDelegate->publishCapabilities(),
         CapabilitiesDelegate::CapabilitiesPublishReturnCode::RETRIABLE_ERROR);
@@ -454,7 +455,7 @@ TEST_F(CapabilitiesDelegateTest, publishRetriableError) {
 }
 
 /// Test republishing capabilities
-TEST_F(CapabilitiesDelegateTest, republish) {
+TEST_F(CapabilitiesDelegateTest, test_republish) {
     std::shared_ptr<TestCapabilityProvider> capabilityProvider = std::make_shared<TestCapabilityProvider>();
     capabilityProvider->addCapabilityConfiguration(
         INTERFACE_TYPE, INTERFACE_NAME_ONE, INTERFACE_VERSION, INTERFACE_CONFIG);
@@ -524,7 +525,7 @@ TEST_F(CapabilitiesDelegateTest, republish) {
 }
 
 /// Tests with registering capabilities
-TEST_F(CapabilitiesDelegateTest, registerTests) {
+TEST_F(CapabilitiesDelegateTest, test_registerTests) {
     std::shared_ptr<TestCapabilityProvider> capabilityProvider = std::make_shared<TestCapabilityProvider>();
     std::unordered_map<std::string, std::string> capabilityConfigurationMap;
 
@@ -607,7 +608,7 @@ TEST_F(CapabilitiesDelegateTest, registerTests) {
 }
 
 /// Test after clearData() is called, that the databse is deleted.
-TEST_F(CapabilitiesDelegateTest, testClearData) {
+TEST_F(CapabilitiesDelegateTest, test_clearData) {
     std::shared_ptr<TestCapabilityProvider> capabilityProvider = std::make_shared<TestCapabilityProvider>();
     capabilityProvider->addCapabilityConfiguration(
         INTERFACE_TYPE, INTERFACE_NAME_ONE, INTERFACE_VERSION, INTERFACE_CONFIG);

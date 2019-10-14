@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -144,14 +144,13 @@ public:
  * Test @c RendererInterface implementation to provide a valid instance for the initialization of other components.
  */
 class StubRenderer : public RendererInterface {
-    void setObserver(std::shared_ptr<capabilityAgents::alerts::renderer::RendererObserverInterface> observer) override {
-    }
-
     void start(
+        std::shared_ptr<capabilityAgents::alerts::renderer::RendererObserverInterface> observer,
         std::function<std::unique_ptr<std::istream>()> audioFactory,
         const std::vector<std::string>& urls,
         int loopCount,
-        std::chrono::milliseconds loopPause) override {
+        std::chrono::milliseconds loopPause,
+        bool startWithPause) override {
     }
 
     void stop() override {
@@ -363,7 +362,7 @@ void AlertsCapabilityAgentTest::testStartAlertWithContentVolume(
     m_alertsCA->onFocusChanged(otherChannel, avsCommon::avs::FocusState::BACKGROUND);
 
     // "Start" alert
-    m_alertsCA->onAlertStateChange("", AlertObserverInterface::State::STARTED, "");
+    m_alertsCA->onAlertStateChange("", "", AlertObserverInterface::State::STARTED, "");
 
     std::unique_lock<std::mutex> ulock(m_mutex);
     waitCV.wait_for(ulock, std::chrono::milliseconds(MAX_WAIT_TIME_MS));
@@ -372,7 +371,7 @@ void AlertsCapabilityAgentTest::testStartAlertWithContentVolume(
 /**
  * Test local alert volume changes. Without alert sounding. Must send event.
  */
-TEST_F(AlertsCapabilityAgentTest, localAlertVolumeChangeNoAlert) {
+TEST_F(AlertsCapabilityAgentTest, test_localAlertVolumeChangeNoAlert) {
     SpeakerInterface::SpeakerSettings speakerSettings;
     speakerSettings.volume = TEST_VOLUME_VALUE;
     speakerSettings.mute = false;
@@ -390,8 +389,8 @@ TEST_F(AlertsCapabilityAgentTest, localAlertVolumeChangeNoAlert) {
 /**
  * Test local alert volume changes. With alert sounding. Must not send event, volume is treated as local.
  */
-TEST_F(AlertsCapabilityAgentTest, localAlertVolumeChangeAlertPlaying) {
-    m_alertsCA->onAlertStateChange("", AlertObserverInterface::State::STARTED, "");
+TEST_F(AlertsCapabilityAgentTest, testTimer_localAlertVolumeChangeAlertPlaying) {
+    m_alertsCA->onAlertStateChange("", "", AlertObserverInterface::State::STARTED, "");
 
     // We have to wait for the alert state to be processed before updating speaker settings.
     auto future = m_mockMessageSender->getNextMessage();
@@ -413,7 +412,7 @@ TEST_F(AlertsCapabilityAgentTest, localAlertVolumeChangeAlertPlaying) {
 /**
  * Test volume changes originated from AVS
  */
-TEST_F(AlertsCapabilityAgentTest, avsAlertVolumeChangeNoAlert) {
+TEST_F(AlertsCapabilityAgentTest, test_avsAlertVolumeChangeNoAlert) {
     // Create Directive.
     auto attachmentManager = std::make_shared<StrictMock<MockAttachmentManager>>();
     auto avsMessageHeader =
@@ -439,7 +438,7 @@ TEST_F(AlertsCapabilityAgentTest, avsAlertVolumeChangeNoAlert) {
 /**
  * Test if AVS alerts volume directive results in a proper event when alert is already playing.
  */
-TEST_F(AlertsCapabilityAgentTest, avsAlertVolumeChangeAlertPlaying) {
+TEST_F(AlertsCapabilityAgentTest, test_avsAlertVolumeChangeAlertPlaying) {
     // Create Directive.
     auto attachmentManager = std::make_shared<StrictMock<MockAttachmentManager>>();
     auto avsMessageHeader =
@@ -448,9 +447,9 @@ TEST_F(AlertsCapabilityAgentTest, avsAlertVolumeChangeAlertPlaying) {
         AVSDirective::create("", avsMessageHeader, VOLUME_PAYLOAD, attachmentManager, "");
 
     EXPECT_CALL(*(m_speakerManager.get()), setVolume(SpeakerInterface::Type::AVS_ALERTS_VOLUME, TEST_VOLUME_VALUE, _))
-        .Times(0);
+        .Times(1);
 
-    m_alertsCA->onAlertStateChange("", AlertObserverInterface::State::STARTED, "");
+    m_alertsCA->onAlertStateChange("", "", AlertObserverInterface::State::STARTED, "");
     auto future = m_mockMessageSender->getNextMessage();
     ASSERT_EQ(future.wait_for(std::chrono::milliseconds(MAX_WAIT_TIME_MS)), std::future_status::ready);
 
@@ -472,7 +471,7 @@ TEST_F(AlertsCapabilityAgentTest, avsAlertVolumeChangeAlertPlaying) {
 /**
  * Test use cases when alert is going to start when content is being played on Content channel with lower volume.
  */
-TEST_F(AlertsCapabilityAgentTest, startAlertWithContentChannelLowerVolume) {
+TEST_F(AlertsCapabilityAgentTest, test_startAlertWithContentChannelLowerVolume) {
     testStartAlertWithContentVolume(
         LOWER_VOLUME_VALUE, HIGHER_VOLUME_VALUE, FocusManagerInterface::CONTENT_CHANNEL_NAME, false);
 }
@@ -480,7 +479,7 @@ TEST_F(AlertsCapabilityAgentTest, startAlertWithContentChannelLowerVolume) {
 /**
  * Test use cases when alert is going to start when content is being played on Content channel with higher volume.
  */
-TEST_F(AlertsCapabilityAgentTest, startAlertWithContentChannelHigherVolume) {
+TEST_F(AlertsCapabilityAgentTest, test_startAlertWithContentChannelHigherVolume) {
     testStartAlertWithContentVolume(
         HIGHER_VOLUME_VALUE, LOWER_VOLUME_VALUE, FocusManagerInterface::CONTENT_CHANNEL_NAME, true);
 }
@@ -488,7 +487,7 @@ TEST_F(AlertsCapabilityAgentTest, startAlertWithContentChannelHigherVolume) {
 /**
  * Test use cases when alert is going to start when content is being played on Comms channel with lower volume.
  */
-TEST_F(AlertsCapabilityAgentTest, startAlertWithCommsChannelLowerVolume) {
+TEST_F(AlertsCapabilityAgentTest, test_startAlertWithCommsChannelLowerVolume) {
     testStartAlertWithContentVolume(
         LOWER_VOLUME_VALUE, HIGHER_VOLUME_VALUE, FocusManagerInterface::COMMUNICATIONS_CHANNEL_NAME, false);
 }
@@ -496,7 +495,7 @@ TEST_F(AlertsCapabilityAgentTest, startAlertWithCommsChannelLowerVolume) {
 /**
  * Test use cases when alert is going to start when content is being played on Comms channel with higher volume.
  */
-TEST_F(AlertsCapabilityAgentTest, startAlertWithCommsChannelHigherVolume) {
+TEST_F(AlertsCapabilityAgentTest, test_startAlertWithCommsChannelHigherVolume) {
     testStartAlertWithContentVolume(
         HIGHER_VOLUME_VALUE, LOWER_VOLUME_VALUE, FocusManagerInterface::COMMUNICATIONS_CHANNEL_NAME, true);
 }
@@ -504,7 +503,7 @@ TEST_F(AlertsCapabilityAgentTest, startAlertWithCommsChannelHigherVolume) {
 /**
  * Test use cases when alert is going to start when content is being played on Dialog channel with lower volume.
  */
-TEST_F(AlertsCapabilityAgentTest, startAlertWithDialogChannelLowerVolume) {
+TEST_F(AlertsCapabilityAgentTest, test_startAlertWithDialogChannelLowerVolume) {
     testStartAlertWithContentVolume(
         LOWER_VOLUME_VALUE, HIGHER_VOLUME_VALUE, FocusManagerInterface::DIALOG_CHANNEL_NAME, false);
 }
@@ -512,7 +511,7 @@ TEST_F(AlertsCapabilityAgentTest, startAlertWithDialogChannelLowerVolume) {
 /**
  * Test use cases when alert is going to start when content is being played on Dialog channel with higher volume.
  */
-TEST_F(AlertsCapabilityAgentTest, startAlertWithDialogChannelHigherVolume) {
+TEST_F(AlertsCapabilityAgentTest, test_startAlertWithDialogChannelHigherVolume) {
     testStartAlertWithContentVolume(
         HIGHER_VOLUME_VALUE, LOWER_VOLUME_VALUE, FocusManagerInterface::DIALOG_CHANNEL_NAME, false);
 }
@@ -520,7 +519,7 @@ TEST_F(AlertsCapabilityAgentTest, startAlertWithDialogChannelHigherVolume) {
 /**
  * Test invalid volume value handling.
  */
-TEST_F(AlertsCapabilityAgentTest, invalidVolumeValuesMax) {
+TEST_F(AlertsCapabilityAgentTest, test_invalidVolumeValuesMax) {
     EXPECT_CALL(*(m_speakerManager.get()), setVolume(SpeakerInterface::Type::AVS_ALERTS_VOLUME, AVS_SET_VOLUME_MAX, _))
         .Times(1);
 
@@ -550,7 +549,7 @@ TEST_F(AlertsCapabilityAgentTest, invalidVolumeValuesMax) {
 /**
  * Test invalid volume value handling.
  */
-TEST_F(AlertsCapabilityAgentTest, invalidVolumeValuesMin) {
+TEST_F(AlertsCapabilityAgentTest, test_invalidVolumeValuesMin) {
     EXPECT_CALL(*(m_speakerManager.get()), setVolume(SpeakerInterface::Type::AVS_ALERTS_VOLUME, AVS_SET_VOLUME_MIN, _))
         .Times(1);
 

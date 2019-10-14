@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -25,11 +25,10 @@ namespace alexaClientSDK {
 namespace playlistParser {
 namespace test {
 
-/// HTTP OK response code which indicates that the request has succeeded.
-static const int HTTP_REQUEST_OK = 200;
+using namespace avsCommon::sdkInterfaces;
 
 /// Short time out for when callbacks are expected not to occur.
-static const auto SHORT_TIMEOUT = std::chrono::milliseconds(50);
+static const auto SHORT_TIMEOUT = std::chrono::milliseconds(100);
 
 /// Test M3U url.
 static const std::string TEST_M3U_PLAYLIST_URL{"http://sanjayisthecoolest.com/sample.m3u"};
@@ -148,32 +147,6 @@ static const size_t TEST_PLS_PLAYLIST_URL_EXPECTED_PARSES = 2;
 static const std::vector<std::string> TEST_PLS_PLAYLIST_URLS = {"http://stream.radiotime.com/sample.mp3",
                                                                 "http://live-mp3-128.kexp.org"};
 
-static const std::string TEST_HLS_RECURSIVE_PLAYLIST_URL{"recursiveSample.m3u8"};
-
-static const std::string TEST_HLS_RECURSIVE_PLAYLIST_CONTENT = TEST_HLS_PLAYLIST_CONTENT + TEST_M3U_PLAYLIST_URL;
-
-static const size_t TEST_HLS_RECURSIVE_PLAYLIST_URL_EXPECTED_PARSES =
-    TEST_HLS_PLAYLIST_URL_EXPECTED_PARSES + TEST_M3U_PLAYLIST_URL_EXPECTED_PARSES;
-
-static const std::vector<std::string> TEST_HLS_RECURSIVE_PLAYLIST_URLS = {
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684358.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684359.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://76.74.255.139/bismarck/live/bismarck.mov_9684360.aac",
-    "http://stream.radiotime.com/sample.mp3",
-    "http://live-mp3-128.kexp.org"};
-
 /// A test playlist in HLS format.
 static const std::string TEST_HLS_LIVE_STREAM_PLAYLIST_URL{"http://sanjayisthecoolest.com/liveStream.m3u8"};
 
@@ -225,7 +198,6 @@ static const std::unordered_map<std::string, std::string> urlsToContentTypes{
     {TEST_M3U_RELATIVE_PLAYLIST_URL, "audio/mpegurl"},
     {TEST_HLS_PLAYLIST_URL, "application/vnd.apple.mpegurl"},
     {TEST_PLS_PLAYLIST_URL, "audio/x-scpls"},
-    {TEST_HLS_RECURSIVE_PLAYLIST_URL, "audio/mpegurl"},
     {TEST_HLS_LIVE_STREAM_PLAYLIST_URL, "audio/mpegurl"},
     // Not playlist content types
     {TEST_MEDIA_URL, "audio/mpeg"},
@@ -246,72 +218,82 @@ static std::unordered_map<std::string, std::string> urlsToContent{
     {TEST_M3U_RELATIVE_PLAYLIST_URL, TEST_M3U_RELATIVE_PLAYLIST_CONTENT},
     {TEST_HLS_PLAYLIST_URL, TEST_HLS_PLAYLIST_CONTENT},
     {TEST_PLS_PLAYLIST_URL, TEST_PLS_CONTENT},
-    {TEST_HLS_RECURSIVE_PLAYLIST_URL, TEST_HLS_RECURSIVE_PLAYLIST_CONTENT},
     {TEST_HLS_LIVE_STREAM_PLAYLIST_URL, TEST_HLS_LIVE_STREAM_PLAYLIST_CONTENT_1}};
 
 /// A mock content fetcher
-class MockContentFetcher : public avsCommon::sdkInterfaces::HTTPContentFetcherInterface {
+class MockContentFetcher : public HTTPContentFetcherInterface {
 public:
-    MockContentFetcher(const std::string& url) : m_url{url} {
+    MockContentFetcher(const std::string& url) : m_url{url}, m_state{HTTPContentFetcherInterface::State::INITIALIZED} {
+    }
+
+    std::string getUrl() const override {
+        return m_url;
+    }
+
+    HTTPContentFetcherInterface::Header getHeader(std::atomic<bool>* shouldShutdown) override {
+        HTTPContentFetcherInterface::Header header;
+        auto it1 = urlsToContentTypes.find(m_url);
+        if (it1 == urlsToContentTypes.end()) {
+            header.successful = false;
+        } else {
+            header.successful = true;
+            header.responseCode = avsCommon::utils::http::HTTPResponseCode::SUCCESS_OK;
+            header.contentType = it1->second;
+            m_state = HTTPContentFetcherInterface::State::HEADER_DONE;
+        }
+        return header;
+    }
+
+    HTTPContentFetcherInterface::State getState() override {
+        return m_state;
+    }
+
+    bool getBody(std::shared_ptr<avsCommon::avs::attachment::AttachmentWriter> writer) override {
+        auto it2 = urlsToContent.find(m_url);
+        if (it2 == urlsToContent.end()) {
+            return false;
+        } else {
+            static bool liveStreamPlaylistRequested = false;
+            if (m_url == TEST_HLS_LIVE_STREAM_PLAYLIST_URL) {
+                if (!liveStreamPlaylistRequested) {
+                    it2->second = TEST_HLS_LIVE_STREAM_PLAYLIST_CONTENT_1;
+                    liveStreamPlaylistRequested = true;
+                } else {
+                    it2->second = TEST_HLS_LIVE_STREAM_PLAYLIST_CONTENT_2;
+                }
+            }
+            auto attachment = writeStringIntoAttachment(it2->second, std::move(writer));
+            if (!attachment) {
+                return false;
+            }
+            m_state = HTTPContentFetcherInterface::State::BODY_DONE;
+        }
+        return true;
+    }
+
+    void shutdown() override {
     }
 
     std::unique_ptr<avsCommon::utils::HTTPContent> getContent(
         FetchOptions fetchOption,
-        std::shared_ptr<avsCommon::avs::attachment::AttachmentWriter> writer) {
-        if (fetchOption == FetchOptions::CONTENT_TYPE) {
-            auto it1 = urlsToContentTypes.find(m_url);
-            if (it1 == urlsToContentTypes.end()) {
-                return nullptr;
-            } else {
-                std::promise<long> statusPromise;
-                auto statusFuture = statusPromise.get_future();
-                statusPromise.set_value(HTTP_REQUEST_OK);
-                std::promise<std::string> contentTypePromise;
-                auto contentTypeFuture = contentTypePromise.get_future();
-                contentTypePromise.set_value(it1->second);
-                return avsCommon::utils::memory::make_unique<avsCommon::utils::HTTPContent>(
-                    std::move(statusFuture), std::move(contentTypeFuture), nullptr);
-            }
-        } else if (fetchOption == FetchOptions::ENTIRE_BODY) {
-            auto it2 = urlsToContent.find(m_url);
-            if (it2 == urlsToContent.end()) {
-                return nullptr;
-            } else {
-                static bool liveStreamPlaylistRequested = false;
-                if (m_url == TEST_HLS_LIVE_STREAM_PLAYLIST_URL) {
-                    if (!liveStreamPlaylistRequested) {
-                        it2->second = TEST_HLS_LIVE_STREAM_PLAYLIST_CONTENT_1;
-                        liveStreamPlaylistRequested = true;
-                    } else {
-                        it2->second = TEST_HLS_LIVE_STREAM_PLAYLIST_CONTENT_2;
-                    }
-                }
-                std::promise<long> statusPromise;
-                auto statusFuture = statusPromise.get_future();
-                statusPromise.set_value(HTTP_REQUEST_OK);
-                std::promise<std::string> contentTypePromise;
-                auto contentTypeFuture = contentTypePromise.get_future();
-                contentTypePromise.set_value("");
-                return avsCommon::utils::memory::make_unique<avsCommon::utils::HTTPContent>(
-                    std::move(statusFuture), std::move(contentTypeFuture), writeStringIntoAttachment(it2->second));
-            }
-        } else {
-            return nullptr;
-        }
+        std::unique_ptr<avsCommon::avs::attachment::AttachmentWriter> writer,
+        const std::vector<std::string>& customHeaders = std::vector<std::string>()) override {
+        return nullptr;
     }
 
 private:
     std::shared_ptr<avsCommon::avs::attachment::InProcessAttachment> writeStringIntoAttachment(
-        const std::string& string) {
+        const std::string& string,
+        std::shared_ptr<avsCommon::avs::attachment::AttachmentWriter> writer) {
         static int id = 0;
         std::shared_ptr<avsCommon::avs::attachment::InProcessAttachment> stream =
             std::make_shared<avsCommon::avs::attachment::InProcessAttachment>(std::to_string(id++));
         if (!stream) {
             return nullptr;
         }
-        auto writer = stream->createWriter();
+
         if (!writer) {
-            return nullptr;
+            writer = stream->createWriter();
         }
         avsCommon::avs::attachment::AttachmentWriter::WriteStatus writeStatus;
         writer->write(string.data(), string.size(), &writeStatus);
@@ -319,6 +301,8 @@ private:
     };
 
     std::string m_url;
+
+    HTTPContentFetcherInterface::State m_state;
 };
 
 }  // namespace test

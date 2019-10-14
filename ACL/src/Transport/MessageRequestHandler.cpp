@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -17,9 +17,9 @@
 #include <functional>
 #include <unordered_map>
 
+#include <AVSCommon/Utils/HTTP/HttpResponseCode.h>
 #include <AVSCommon/Utils/HTTP2/HTTP2MimeRequestEncoder.h>
 #include <AVSCommon/Utils/HTTP2/HTTP2MimeResponseDecoder.h>
-#include <AVSCommon/Utils/LibcurlUtils/HttpResponseCodes.h>
 #include <AVSCommon/Utils/Logger/Logger.h>
 
 #include "ACL/Transport/HTTP2Transport.h"
@@ -31,6 +31,7 @@ namespace acl {
 
 using namespace avsCommon::avs::attachment;
 using namespace avsCommon::sdkInterfaces;
+using namespace avsCommon::utils::http;
 using namespace avsCommon::utils::http2;
 
 /// URL to send events to
@@ -80,7 +81,7 @@ std::shared_ptr<MessageRequestHandler> MessageRequestHandler::create(
     std::shared_ptr<avsCommon::avs::MessageRequest> messageRequest,
     std::shared_ptr<MessageConsumerInterface> messageConsumer,
     std::shared_ptr<avsCommon::avs::attachment::AttachmentManager> attachmentManager) {
-    ACSDK_DEBUG5(LX(__func__).d("context", context.get()).d("messageRequest", messageRequest.get()));
+    ACSDK_DEBUG7(LX(__func__).d("context", context.get()).d("messageRequest", messageRequest.get()));
 
     if (!context) {
         ACSDK_CRITICAL(LX("MessageRequestHandlerCreateFailed").d("reason", "nullHttp2Transport"));
@@ -135,11 +136,11 @@ MessageRequestHandler::MessageRequestHandler(
         m_wasMessageRequestAcknowledgeReported{false},
         m_wasMessageRequestFinishedReported{false},
         m_responseCode{0} {
-    ACSDK_DEBUG5(LX(__func__).d("context", context.get()).d("messageRequest", messageRequest.get()));
+    ACSDK_DEBUG7(LX(__func__).d("context", context.get()).d("messageRequest", messageRequest.get()));
 }
 
 void MessageRequestHandler::reportMessageRequestAcknowledged() {
-    ACSDK_DEBUG5(LX(__func__));
+    ACSDK_DEBUG7(LX(__func__));
     if (!m_wasMessageRequestAcknowledgeReported) {
         m_wasMessageRequestAcknowledgeReported = true;
         m_context->onMessageRequestAcknowledged();
@@ -147,7 +148,7 @@ void MessageRequestHandler::reportMessageRequestAcknowledged() {
 }
 
 void MessageRequestHandler::reportMessageRequestFinished() {
-    ACSDK_DEBUG5(LX(__func__));
+    ACSDK_DEBUG7(LX(__func__));
     if (!m_wasMessageRequestFinishedReported) {
         m_wasMessageRequestFinishedReported = true;
         m_context->onMessageRequestFinished();
@@ -155,7 +156,7 @@ void MessageRequestHandler::reportMessageRequestFinished() {
 }
 
 std::vector<std::string> MessageRequestHandler::getRequestHeaderLines() {
-    ACSDK_DEBUG5(LX(__func__));
+    ACSDK_DEBUG9(LX(__func__));
 
     m_context->onActivity();
 
@@ -163,7 +164,7 @@ std::vector<std::string> MessageRequestHandler::getRequestHeaderLines() {
 }
 
 HTTP2GetMimeHeadersResult MessageRequestHandler::getMimePartHeaderLines() {
-    ACSDK_DEBUG5(LX(__func__));
+    ACSDK_DEBUG9(LX(__func__));
 
     m_context->onActivity();
 
@@ -185,7 +186,7 @@ HTTP2GetMimeHeadersResult MessageRequestHandler::getMimePartHeaderLines() {
 }
 
 HTTP2SendDataResult MessageRequestHandler::onSendMimePartData(char* bytes, size_t size) {
-    ACSDK_DEBUG5(LX(__func__).d("size", size));
+    ACSDK_DEBUG9(LX(__func__).d("size", size));
 
     m_context->onActivity();
 
@@ -203,7 +204,7 @@ HTTP2SendDataResult MessageRequestHandler::onSendMimePartData(char* bytes, size_
     } else if (m_namedReader) {
         auto readStatus = AttachmentReader::ReadStatus::OK;
         auto bytesRead = m_namedReader->reader->read(bytes, size, &readStatus);
-        ACSDK_DEBUG5(LX("attachmentRead").d("readStatus", (int)readStatus).d("bytesRead", bytesRead));
+        ACSDK_DEBUG9(LX("attachmentRead").d("readStatus", (int)readStatus).d("bytesRead", bytesRead));
         switch (readStatus) {
             // The good cases.
             case AttachmentReader::ReadStatus::OK:
@@ -240,13 +241,13 @@ void MessageRequestHandler::onActivity() {
 }
 
 bool MessageRequestHandler::onReceiveResponseCode(long responseCode) {
-    ACSDK_DEBUG5(LX(__func__).d("responseCode", responseCode));
+    ACSDK_DEBUG7(LX(__func__).d("responseCode", responseCode));
 
     // TODO ACSDK-1839: Provide MessageRequestObserverInterface immediate notification of receipt of response code.
 
     reportMessageRequestAcknowledged();
 
-    if (HTTPResponseCode::FORBIDDEN == responseCode) {
+    if (HTTPResponseCode::CLIENT_ERROR_FORBIDDEN == intToHTTPResponseCode(responseCode)) {
         m_context->onForbidden(m_authToken);
     }
 
@@ -255,7 +256,7 @@ bool MessageRequestHandler::onReceiveResponseCode(long responseCode) {
 }
 
 void MessageRequestHandler::onResponseFinished(HTTP2ResponseFinishedStatus status, const std::string& nonMimeBody) {
-    ACSDK_DEBUG5(LX(__func__).d("status", status).d("responseCode", m_responseCode));
+    ACSDK_DEBUG7(LX(__func__).d("status", status).d("responseCode", m_responseCode));
 
     if (HTTP2ResponseFinishedStatus::TIMEOUT == status) {
         m_context->onMessageRequestTimeout();
@@ -264,7 +265,7 @@ void MessageRequestHandler::onResponseFinished(HTTP2ResponseFinishedStatus statu
     reportMessageRequestAcknowledged();
     reportMessageRequestFinished();
 
-    if (m_responseCode != HTTPResponseCode::SUCCESS_OK && !nonMimeBody.empty()) {
+    if ((intToHTTPResponseCode(m_responseCode) != HTTPResponseCode::SUCCESS_OK) && !nonMimeBody.empty()) {
         m_messageRequest->exceptionReceived(nonMimeBody);
     }
 
@@ -289,9 +290,9 @@ void MessageRequestHandler::onResponseFinished(HTTP2ResponseFinishedStatus statu
         {HTTPResponseCode::HTTP_RESPONSE_CODE_UNDEFINED, MessageRequestObserverInterface::Status::INTERNAL_ERROR},
         {HTTPResponseCode::SUCCESS_OK, MessageRequestObserverInterface::Status::SUCCESS},
         {HTTPResponseCode::SUCCESS_NO_CONTENT, MessageRequestObserverInterface::Status::SUCCESS_NO_CONTENT},
-        {HTTPResponseCode::BAD_REQUEST, MessageRequestObserverInterface::Status::BAD_REQUEST},
-        {HTTPResponseCode::FORBIDDEN, MessageRequestObserverInterface::Status::INVALID_AUTH},
-        {HTTPResponseCode::SERVER_INTERNAL_ERROR, MessageRequestObserverInterface::Status::SERVER_INTERNAL_ERROR_V2}};
+        {HTTPResponseCode::CLIENT_ERROR_BAD_REQUEST, MessageRequestObserverInterface::Status::BAD_REQUEST},
+        {HTTPResponseCode::CLIENT_ERROR_FORBIDDEN, MessageRequestObserverInterface::Status::INVALID_AUTH},
+        {HTTPResponseCode::SERVER_ERROR_INTERNAL, MessageRequestObserverInterface::Status::SERVER_INTERNAL_ERROR_V2}};
 
     auto result = MessageRequestObserverInterface::Status::INTERNAL_ERROR;
 

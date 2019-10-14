@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -54,6 +54,11 @@ public:
          * Notification that it is time to send a ProgressReportIntervalElapsed event.
          */
         virtual void onProgressReportIntervalElapsed() = 0;
+
+        /**
+         * Destructor.
+         */
+        virtual ~ContextInterface() = default;
     };
 
     /// Delay value for no ProgressReportDelayElapsed notifications.
@@ -70,7 +75,7 @@ public:
     /**
      * Destructor.
      */
-    ~ProgressTimer();
+    virtual ~ProgressTimer();
 
     /**
      * Initialize for sending notifications that it is time to send a progress report.

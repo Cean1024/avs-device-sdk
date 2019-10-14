@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -16,17 +16,23 @@
 #ifndef ALEXA_CLIENT_SDK_SAMPLEAPP_INCLUDE_SAMPLEAPP_UIMANAGER_H_
 #define ALEXA_CLIENT_SDK_SAMPLEAPP_INCLUDE_SAMPLEAPP_UIMANAGER_H_
 
+#include <Alerts/AlertObserverInterface.h>
 #include <AVSCommon/SDKInterfaces/AuthObserverInterface.h>
 #include <AVSCommon/SDKInterfaces/CapabilitiesObserverInterface.h>
-#include <AVSCommon/SDKInterfaces/DialogUXStateObserverInterface.h>
 #include <AVSCommon/SDKInterfaces/ConnectionStatusObserverInterface.h>
-#include <AVSCommon/SDKInterfaces/AuthObserverInterface.h>
+#include <AVSCommon/SDKInterfaces/DialogUXStateObserverInterface.h>
+#include <AVSCommon/SDKInterfaces/LocaleAssetsManagerInterface.h>
 #include <AVSCommon/SDKInterfaces/NotificationsObserverInterface.h>
 #include <AVSCommon/SDKInterfaces/SingleSettingObserverInterface.h>
 #include <AVSCommon/SDKInterfaces/SpeakerInterface.h>
 #include <AVSCommon/SDKInterfaces/SpeakerManagerObserverInterface.h>
+#include <AVSCommon/SDKInterfaces/Bluetooth/BluetoothDeviceObserverInterface.h>
 #include <AVSCommon/Utils/Threading/Executor.h>
 #include <CBLAuthDelegate/CBLAuthRequesterInterface.h>
+#include <Settings/DeviceSettingsManager.h>
+#include <Settings/SettingCallbacks.h>
+#include <Settings/SpeechConfirmationSettingType.h>
+#include <Settings/WakeWordConfirmationSettingType.h>
 
 namespace alexaClientSDK {
 namespace sampleApp {
@@ -43,12 +49,17 @@ class UIManager
         , public avsCommon::sdkInterfaces::SingleSettingObserverInterface
         , public avsCommon::sdkInterfaces::SpeakerManagerObserverInterface
         , public avsCommon::sdkInterfaces::NotificationsObserverInterface
+        , public avsCommon::sdkInterfaces::bluetooth::BluetoothDeviceObserverInterface
         , public authorization::cblAuthDelegate::CBLAuthRequesterInterface {
 public:
+    using DeviceAttributes = avsCommon::sdkInterfaces::bluetooth::BluetoothDeviceObserverInterface::DeviceAttributes;
+
     /**
      * Constructor.
+     *
+     * @param localeAssetsManager The @c LocaleAssetsManagerInterface that provides the supported locales.
      */
-    UIManager();
+    UIManager(std::shared_ptr<avsCommon::sdkInterfaces::LocaleAssetsManagerInterface> localeAssetsManager);
 
     void onDialogUXStateChanged(DialogUXState state) override;
 
@@ -67,6 +78,8 @@ public:
     /// @name NotificationsObserverInterface Functions
     /// @{
     void onSetIndicator(avsCommon::avs::IndicatorState state) override;
+
+    void onNotificationReceived() override{};
     /// }
 
     /// @name CBLAuthRequesterInterface Functions
@@ -87,6 +100,12 @@ public:
     void onCapabilitiesStateChange(
         avsCommon::sdkInterfaces::CapabilitiesObserverInterface::State newState,
         avsCommon::sdkInterfaces::CapabilitiesObserverInterface::Error newError) override;
+    /// }
+
+    /// @name BluetoothDeviceObserverInterface Methods
+    // @{
+    void onActiveDeviceConnected(const DeviceAttributes& deviceAttributes) override;
+    void onActiveDeviceDisconnected(const DeviceAttributes& deviceAttributes) override;
     /// }
 
     /**
@@ -129,10 +148,39 @@ public:
      */
     void printVolumeControlScreen();
 
+#ifdef ENABLE_PCC
     /**
-     * Prints the ESP Control Options screen. This gives the user the possible ESP control options.
+     * Prints the Phone Control screen. This gives the user the possible phone control options
      */
-    void printESPControlScreen(bool support, const std::string& voiceEnergy, const std::string& ambientEnergy);
+    void printPhoneControlScreen();
+
+    /**
+     * Prints the Call Id screen. This prompts the user to enter a caller Id.
+     */
+    void printCallerIdScreen();
+
+    /**
+     * Prints the Caller Id screen. This prompts the user to enter a caller Id.
+     */
+    void printCallIdScreen();
+#endif
+
+#ifdef ENABLE_MCC
+    /**
+     * Prints the Meeting Control screen. This gives the user the possible meeting control options
+     */
+    void printMeetingControlScreen();
+
+    /**
+     * Prints the Session Id screen. This prompts the user to enter a session Id.
+     */
+    void printSessionIdScreen();
+
+    /**
+     * Prints the Calendar Items screen. This prompts the user to enter a path to Calendar Json file.
+     */
+    void printCalendarItemsScreen();
+#endif
 
     /**
      * Prints the Comms Control Options screen. This gives the user the possible Comms control options.
@@ -170,19 +218,37 @@ public:
     void printReauthorizeConfirmation();
 
     /**
-     * Prints an error message while trying to configure ESP in a device where ESP is not supported.
-     */
-    void printESPNotSupported();
-
-    /**
-     * Prints an error message while trying to override ESP Data in a device that do not support manual override.
-     */
-    void printESPDataOverrideNotSupported();
-
-    /**
      * Prints an error message when trying to access Comms controls if Comms is not supported.
      */
     void printCommsNotSupported();
+
+    /**
+     * Configure settings notifications.
+     *
+     * @param Pointer to the settings manager
+     * @return @true if it succeeds to configure the settings notifications; @c false otherwise.
+     */
+    bool configureSettingsNotifications(std::shared_ptr<settings::DeviceSettingsManager> settingsManager);
+
+    /**
+     * Prints menu for wake word confirmation.
+     */
+    void printWakeWordConfirmationScreen();
+
+    /**
+     * Prints menu for speech confirmation.
+     */
+    void printSpeechConfirmationScreen();
+
+    /**
+     * Prints menu for device time zone.
+     */
+    void printTimeZoneScreen();
+
+    /**
+     * Prints menu for do not disturb mode.
+     */
+    void printDoNotDisturbScreen();
 
 private:
     /**
@@ -190,6 +256,39 @@ private:
      * component states. This should only be used within the internal executor.
      */
     void printState();
+
+    /**
+     * Callback function triggered when there is a notification available regarding a boolean setting.
+     *
+     * @param name The setting name that was affected.
+     * @param enable Whether the configuration is currently enabled or disabled.
+     * @param notification The type of notification.
+     */
+    void onBooleanSettingNotification(
+        const std::string& name,
+        bool enable,
+        settings::SettingNotifications notification);
+
+    /**
+     * Callback function triggered when there is a notification available regarding a string setting.
+     *
+     * @param name The setting name that was affected.
+     * @param value The string value.
+     * @param notification The type of notification.
+     */
+    void onStringSettingNotification(const std::string& name, bool enable, settings::SettingNotifications notification);
+
+    /**
+     * Callback function triggered when there is a notification available regarding a setting.
+     * This will print out the new value of the setting.
+     *
+     * @tparam SettingType The data type of the setting.
+     * @param name The setting name that was affected.
+     * @param value The value of the setting.
+     * @param notification The type of notification.
+     */
+    template <typename SettingType>
+    void onSettingNotification(const std::string& name, SettingType value, settings::SettingNotifications notification);
 
     /**
      * Sets the failure status. If status is new and not empty, we'll print the limited mode help.
@@ -217,11 +316,17 @@ private:
     /// The current connection state of the SDK.
     avsCommon::sdkInterfaces::ConnectionStatusObserverInterface::Status m_connectionStatus;
 
+    /// The @c LocaleAssetsManagerInterface that provides the supported locales.
+    std::shared_ptr<avsCommon::sdkInterfaces::LocaleAssetsManagerInterface> m_localeAssetsManager;
+
     /// An internal executor that performs execution of callable objects passed to it sequentially but asynchronously.
     avsCommon::utils::threading::Executor m_executor;
 
     // String that holds a failure status message to be displayed when we are in limited mode.
     std::string m_failureStatus;
+
+    // Object that manages settings notifications.
+    std::shared_ptr<settings::SettingCallbacks<settings::DeviceSettingsManager>> m_callbacks;
 };
 
 }  // namespace sampleApp

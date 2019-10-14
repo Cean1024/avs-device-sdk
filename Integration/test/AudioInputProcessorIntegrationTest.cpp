@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@
 #include <AIP/AudioInputProcessor.h>
 #include <AIP/AudioProvider.h>
 #include <AIP/Initiator.h>
+#include <Audio/SystemSoundAudioFactory.h>
 #include <AVSCommon/AVS/Attachment/InProcessAttachmentWriter.h>
 #include <AVSCommon/AVS/BlockingPolicy.h>
 #include <AVSCommon/AVS/MessageRequest.h>
@@ -41,8 +42,19 @@
 #include <AVSCommon/SDKInterfaces/DirectiveHandlerResultInterface.h>
 #include <AVSCommon/SDKInterfaces/ExceptionEncounteredSenderInterface.h>
 #include <AVSCommon/SDKInterfaces/KeyWordObserverInterface.h>
+#include <AVSCommon/SDKInterfaces/MockLocaleAssetsManager.h>
 #include <AVSCommon/Utils/JSON/JSONUtils.h>
+#include <AVSCommon/Utils/LibcurlUtils/HTTPContentFetcherFactory.h>
 #include <AVSCommon/Utils/Logger/LogEntry.h>
+#ifdef GSTREAMER_MEDIA_PLAYER
+#include <MediaPlayer/MediaPlayer.h>
+#else
+#include "Integration/TestMediaPlayer.h"
+#endif
+#include <Settings/MockSetting.h>
+#include <Settings/SpeechConfirmationSettingType.h>
+#include <Settings/WakeWordConfirmationSettingType.h>
+#include <SystemSoundPlayer/SystemSoundPlayer.h>
 
 #include "Integration/ACLTestContext.h"
 #include "Integration/ObservableMessageRequest.h"
@@ -77,6 +89,8 @@ using namespace avsCommon::utils::sds;
 using namespace avsCommon::utils::json;
 using namespace afml;
 using namespace contextManager;
+using namespace settings;
+using namespace settings::test;
 
 // This is a 16 bit 16 kHz little endian linear PCM audio file of "Tell me a Joke" to be recognized.
 static const std::string JOKE_AUDIO_FILE = "/recognize_joke_test.wav";
@@ -380,8 +394,8 @@ protected:
         m_exceptionEncounteredSender = std::make_shared<TestExceptionEncounteredSender>();
 
         DirectiveHandlerConfiguration handlerConfig;
-        handlerConfig[SET_MUTE_PAIR] = BlockingPolicy::NON_BLOCKING;
-        handlerConfig[SPEAK_PAIR] = BlockingPolicy::BLOCKING;
+        handlerConfig[SET_MUTE_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, false);
+        handlerConfig[SPEAK_PAIR] = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
         m_directiveHandler = std::make_shared<TestDirectiveHandler>(handlerConfig);
 
         m_directiveSequencer = DirectiveSequencer::create(m_exceptionEncounteredSender);
@@ -399,6 +413,11 @@ protected:
         size_t wordSize = 2;
         size_t maxReaders = 3;
         size_t bufferSize = AudioInputStream::calculateBufferSize(nWords, wordSize, maxReaders);
+
+        m_wakeWordConfirmation =
+            std::make_shared<MockSetting<WakeWordConfirmationSettingType>>(getWakeWordConfirmationDefault());
+        m_speechConfirmation =
+            std::make_shared<MockSetting<SpeechConfirmationSettingType>>(getSpeechConfirmationDefault());
 
         auto m_Buffer = std::make_shared<avsCommon::avs::AudioInputStream::Buffer>(bufferSize);
         auto m_Sds = avsCommon::avs::AudioInputStream::create(m_Buffer, wordSize, maxReaders);
@@ -445,6 +464,18 @@ protected:
         connect();
 
         m_userInactivityMonitor = UserInactivityMonitor::create(m_avsConnectionManager, m_exceptionEncounteredSender);
+
+#ifdef GSTREAMER_MEDIA_PLAYER
+        auto systemSoundMediaPlayer = alexaClientSDK::mediaPlayer::MediaPlayer::create(
+            std::make_shared<avsCommon::utils::libcurlUtils::HTTPContentFetcherFactory>());
+#else
+        auto systemSoundMediaPlayer = std::make_shared<TestMediaPlayer>();
+#endif
+
+        m_systemSoundPlayer = applicationUtilities::systemSoundPlayer::SystemSoundPlayer::create(
+            systemSoundMediaPlayer,
+            std::make_shared<applicationUtilities::resources::audio::SystemSoundAudioFactory>());
+
         m_AudioInputProcessor = AudioInputProcessor::create(
             m_directiveSequencer,
             m_avsConnectionManager,
@@ -452,12 +483,16 @@ protected:
             m_focusManager,
             m_dialogUXStateAggregator,
             m_exceptionEncounteredSender,
-            m_userInactivityMonitor);
+            m_userInactivityMonitor,
+            m_systemSoundPlayer,
+            std::make_shared<::testing::NiceMock<sdkInterfaces::test::MockLocaleAssetsManager>>(),
+            m_wakeWordConfirmation,
+            m_speechConfirmation);
         ASSERT_NE(nullptr, m_AudioInputProcessor);
         m_AudioInputProcessor->addObserver(m_dialogUXStateAggregator);
 
         m_testClient = std::make_shared<TestClient>();
-        ASSERT_TRUE(m_focusManager->acquireChannel(FocusManager::ALERTS_CHANNEL_NAME, m_testClient, ALARM_ACTIVITY_ID));
+        ASSERT_TRUE(m_focusManager->acquireChannel(FocusManager::ALERT_CHANNEL_NAME, m_testClient, ALARM_ACTIVITY_ID));
         ASSERT_EQ(m_testClient->waitForFocusChange(LONG_TIMEOUT_DURATION), FocusState::FOREGROUND);
 
         m_StateObserver = std::make_shared<AipStateObserver>();
@@ -580,6 +615,9 @@ protected:
     std::shared_ptr<AudioProvider> m_TapToTalkAudioProvider;
     std::shared_ptr<AudioProvider> m_HoldToTalkAudioProvider;
     avsCommon::utils::AudioFormat m_compatibleAudioFormat;
+    std::shared_ptr<applicationUtilities::systemSoundPlayer::SystemSoundPlayer> m_systemSoundPlayer;
+    std::shared_ptr<settings::test::MockSetting<settings::WakeWordConfirmationSettingType>> m_wakeWordConfirmation;
+    std::shared_ptr<settings::test::MockSetting<settings::SpeechConfirmationSettingType>> m_speechConfirmation;
 #if defined(KWD_KITTAI) || defined(KWD_SENSORY)
     std::shared_ptr<wakeWordTrigger> m_wakeWordTrigger;
 #ifdef KWD_KITTAI
@@ -642,7 +680,7 @@ std::vector<T> readAudioFromFile(const std::string& fileName, const int& headerP
  * directive.
  */
 #if defined(KWD_KITTAI) || defined(KWD_SENSORY)
-TEST_F(AudioInputProcessorTest, wakeWordJoke) {
+TEST_F(AudioInputProcessorTest, test_wakeWordJoke) {
     // Put audio onto the SDS saying "Alexa, Tell me a joke".
     bool error;
     std::string file = g_inputPath + ALEXA_JOKE_AUDIO_FILE;
@@ -693,7 +731,7 @@ TEST_F(AudioInputProcessorTest, wakeWordJoke) {
  * AudioInputProcessor is then observed to send a Recognize event to AVS which responds with no directives.
  */
 #if defined(KWD_KITTAI) || defined(KWD_SENSORY)
-TEST_F(AudioInputProcessorTest, wakeWordSilence) {
+TEST_F(AudioInputProcessorTest, test_wakeWordSilence) {
     // Put audio onto the SDS saying "Alexa ......".
     bool error;
     std::string file = g_inputPath + ALEXA_SILENCE_AUDIO_FILE;
@@ -738,7 +776,7 @@ TEST_F(AudioInputProcessorTest, wakeWordSilence) {
  * and ExpectSpeech directive. Audio of "Lions" is then fed into the stream and another recognize event is sent.
  */
 #if defined(KWD_KITTAI) || defined(KWD_SENSORY)
-TEST_F(AudioInputProcessorTest, wakeWordMultiturn) {
+TEST_F(AudioInputProcessorTest, test_wakeWordMultiturn) {
     // Put audio onto the SDS saying "Alexa, wikipedia".
     bool error;
     std::string file = g_inputPath + ALEXA_WIKI_AUDIO_FILE;
@@ -834,7 +872,7 @@ TEST_F(AudioInputProcessorTest, wakeWordMultiturn) {
  * but no directives are given in response.
  */
 #if defined(KWD_KITTAI) || defined(KWD_SENSORY)
-TEST_F(AudioInputProcessorTest, wakeWordMultiturnWithoutUserResponse) {
+TEST_F(AudioInputProcessorTest, test_wakeWordMultiturnWithoutUserResponse) {
     // Put audio onto the SDS saying "Alexa, wikipedia".
     bool error;
     std::string file = g_inputPath + ALEXA_WIKI_AUDIO_FILE;
@@ -929,7 +967,7 @@ TEST_F(AudioInputProcessorTest, wakeWordMultiturnWithoutUserResponse) {
  * AudioInputProcessor is then observed to send a Recognize event to AVS which responds with a SetMute and Speak
  * directive.
  */
-TEST_F(AudioInputProcessorTest, DISABLED_tapToTalkJoke) {
+TEST_F(AudioInputProcessorTest, DISABLED_test_tapToTalkJoke) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_tapToTalkButton->startRecognizing(m_AudioInputProcessor, m_TapToTalkAudioProvider));
 
@@ -974,7 +1012,8 @@ TEST_F(AudioInputProcessorTest, DISABLED_tapToTalkJoke) {
     }
 }
 
-TEST_F(AudioInputProcessorTest, tapToTalkTimeOpus) {
+// ACSDK-2410 Disable this test temporarily due to running into issues with Raspberry Pi
+TEST_F(AudioInputProcessorTest, DISABLED_test_tapToTalkTimeOpus) {
     m_compatibleAudioFormat.sampleRateHz = COMPATIBLE_SAMPLE_RATE_OPUS_32;
     m_compatibleAudioFormat.numChannels = COMPATIBLE_NUM_CHANNELS;
     m_compatibleAudioFormat.endianness = COMPATIBLE_ENDIANNESS;
@@ -1026,7 +1065,7 @@ TEST_F(AudioInputProcessorTest, tapToTalkTimeOpus) {
  * To do this, audio of "....." is fed into a stream after button sends recognize to AudioInputProcessor. The
  * AudioInputProcessor is then observed to send a Recognize event to AVS which responds no directives.
  */
-TEST_F(AudioInputProcessorTest, tapToTalkSilence) {
+TEST_F(AudioInputProcessorTest, test_tapToTalkSilence) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_tapToTalkButton->startRecognizing(m_AudioInputProcessor, m_TapToTalkAudioProvider));
 
@@ -1071,7 +1110,7 @@ TEST_F(AudioInputProcessorTest, tapToTalkSilence) {
  * To do this, no audio is fed into a stream after button sends recognize to AudioInputProcessor. The
  * AudioInputProcessor is then observed to send a Recognize event to AVS which responds with no directive.
  */
-TEST_F(AudioInputProcessorTest, tapToTalkNoAudio) {
+TEST_F(AudioInputProcessorTest, test_tapToTalkNoAudio) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_tapToTalkButton->startRecognizing(m_AudioInputProcessor, m_TapToTalkAudioProvider));
 
@@ -1106,7 +1145,7 @@ TEST_F(AudioInputProcessorTest, tapToTalkNoAudio) {
  * with a SetMute and Speak directive.
  */
 #if defined(KWD_KITTAI) || defined(KWD_SENSORY)
-TEST_F(AudioInputProcessorTest, tapToTalkWithWakeWordConflict) {
+TEST_F(AudioInputProcessorTest, test_tapToTalkWithWakeWordConflict) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_tapToTalkButton->startRecognizing(m_AudioInputProcessor, m_TapToTalkAudioProvider));
 
@@ -1159,7 +1198,7 @@ TEST_F(AudioInputProcessorTest, tapToTalkWithWakeWordConflict) {
  * AudioInputProcessor is then observed to send a Recognize event to AVS which responds with a SetMute, Speak,
  * and ExpectSpeech directive. Audio of "Lions" is then fed into the stream and another recognize event is sent.
  */
-TEST_F(AudioInputProcessorTest, tapToTalkMultiturn) {
+TEST_F(AudioInputProcessorTest, test_tapToTalkMultiturn) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_tapToTalkButton->startRecognizing(m_AudioInputProcessor, m_TapToTalkAudioProvider));
 
@@ -1254,7 +1293,7 @@ TEST_F(AudioInputProcessorTest, tapToTalkMultiturn) {
  * and ExpectSpeech directive. Audio of "...." is then fed into the stream and another recognize event is sent
  * but no directives are given in response.
  */
-TEST_F(AudioInputProcessorTest, tapToTalkMultiturnWithoutUserResponse) {
+TEST_F(AudioInputProcessorTest, test_tapToTalkMultiturnWithoutUserResponse) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_tapToTalkButton->startRecognizing(m_AudioInputProcessor, m_TapToTalkAudioProvider));
 
@@ -1361,7 +1400,7 @@ TEST_F(AudioInputProcessorTest, tapToTalkMultiturnWithoutUserResponse) {
  * To do this, audio of "Tell me a joke" is fed into a stream after button sends recognize to AudioInputProcessor. The
  * button then sends a reset command and no recognize event is sent.
  */
-TEST_F(AudioInputProcessorTest, tapToTalkCancel) {
+TEST_F(AudioInputProcessorTest, test_tapToTalkCancel) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_tapToTalkButton->startRecognizing(m_AudioInputProcessor, m_TapToTalkAudioProvider));
 
@@ -1395,7 +1434,7 @@ TEST_F(AudioInputProcessorTest, tapToTalkCancel) {
  * AudioInputProcessor is then observed to send a Recognize event to AVS which responds with a SetMute and Speak
  * directive.
  */
-TEST_F(AudioInputProcessorTest, holdToTalkJoke) {
+TEST_F(AudioInputProcessorTest, test_holdToTalkJoke) {
     // Signal to the AIP to start recognizing.
     ASSERT_NE(nullptr, m_HoldToTalkAudioProvider);
     ASSERT_TRUE(m_holdToTalkButton->startRecognizing(m_AudioInputProcessor, m_HoldToTalkAudioProvider));
@@ -1451,7 +1490,7 @@ TEST_F(AudioInputProcessorTest, holdToTalkJoke) {
  * AudioInputProcessor is then observed to send a Recognize event to AVS which responds with a SetMute, Speak,
  * and ExpectSpeech directive. Audio of "Lions" is then fed into the stream and another recognize event is sent.
  */
-TEST_F(AudioInputProcessorTest, holdToTalkMultiturn) {
+TEST_F(AudioInputProcessorTest, test_holdToTalkMultiturn) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_holdToTalkButton->startRecognizing(m_AudioInputProcessor, m_HoldToTalkAudioProvider));
 
@@ -1556,7 +1595,7 @@ TEST_F(AudioInputProcessorTest, holdToTalkMultiturn) {
  * and ExpectSpeech directive. Audio of "...." is then fed into the stream and another recognize event is sent
  * but no directives are given in response.
  */
-TEST_F(AudioInputProcessorTest, holdToTalkMultiTurnWithSilence) {
+TEST_F(AudioInputProcessorTest, test_holdToTalkMultiTurnWithSilence) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_holdToTalkButton->startRecognizing(m_AudioInputProcessor, m_HoldToTalkAudioProvider));
 
@@ -1677,7 +1716,7 @@ TEST_F(AudioInputProcessorTest, holdToTalkMultiTurnWithSilence) {
  * and ExpectSpeech directive. The button does not trigger another recognize so no recognize event is sent
  * and no directives are given in response. ExpectSpeechTimedOut event is observed to be sent.
  */
-TEST_F(AudioInputProcessorTest, holdToTalkMultiturnWithTimeOut) {
+TEST_F(AudioInputProcessorTest, test_holdToTalkMultiturnWithTimeOut) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_holdToTalkButton->startRecognizing(m_AudioInputProcessor, m_HoldToTalkAudioProvider));
 
@@ -1747,7 +1786,7 @@ TEST_F(AudioInputProcessorTest, holdToTalkMultiturnWithTimeOut) {
  * To do this, no audio is fed into a stream after button sends recognize to AudioInputProcessor. The
  * AudioInputProcessor is then observed to send a Recognize event to AVS which responds with no directive.
  */
-TEST_F(AudioInputProcessorTest, holdToTalkNoAudio) {
+TEST_F(AudioInputProcessorTest, test_holdToTalkNoAudio) {
     // Signal to the AIP to start recognizing.
     ASSERT_TRUE(m_holdToTalkButton->startRecognizing(m_AudioInputProcessor, m_HoldToTalkAudioProvider));
 
@@ -1789,7 +1828,7 @@ TEST_F(AudioInputProcessorTest, holdToTalkNoAudio) {
  * To do this, audio of "Tell me a joke" is fed into a stream after button sends recognize to AudioInputProcessor. The
  * button then sends a cancel command and no recognize event is sent.
  */
-TEST_F(AudioInputProcessorTest, holdToTalkCancel) {
+TEST_F(AudioInputProcessorTest, test_holdToTalkCancel) {
     // Signal to the AIP to start recognizing.
     ASSERT_NE(nullptr, m_HoldToTalkAudioProvider);
     ASSERT_TRUE(m_holdToTalkButton->startRecognizing(m_AudioInputProcessor, m_HoldToTalkAudioProvider));
@@ -1832,7 +1871,7 @@ TEST_F(AudioInputProcessorTest, holdToTalkCancel) {
  * To do this, audio of "Tell me a joke" is fed into a stream that is being read by a wake word engine. The
  * lack of the wakeword or button-initiated recognize results in no recognize event being sent.
  */
-TEST_F(AudioInputProcessorTest, audioWithoutAnyTrigger) {
+TEST_F(AudioInputProcessorTest, test_audioWithoutAnyTrigger) {
     // Put audio onto the SDS saying "Tell me a joke" without a trigger.
     bool error;
     std::string file = g_inputPath + JOKE_AUDIO_FILE;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -15,13 +15,13 @@
 
 #include "TestableHttpPut.h"
 
-#include <AVSCommon/Utils/LibcurlUtils/HttpResponseCodes.h>
+#include <AVSCommon/Utils/HTTP/HttpResponseCode.h>
 
 namespace alexaClientSDK {
 namespace capabilitiesDelegate {
 namespace test {
 
-using namespace avsCommon::utils::libcurlUtils;
+using namespace avsCommon::utils::http;
 
 TestHttpPut::TestHttpPut() : m_httpResponseCode{HTTPResponseCode::HTTP_RESPONSE_CODE_UNDEFINED} {
 }

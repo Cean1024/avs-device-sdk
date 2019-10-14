@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -28,8 +28,8 @@
 #include <AVSCommon/AVS/Attachment/AttachmentManager.h>
 #include <AVSCommon/AVS/Attachment/AttachmentUtils.h>
 #include <AVSCommon/Utils/PromiseFuturePair.h>
+#include <AVSCommon/Utils/HTTP/HttpResponseCode.h>
 #include <AVSCommon/Utils/HTTP2/HTTP2RequestConfig.h>
-#include <AVSCommon/Utils/LibcurlUtils/HttpResponseCodes.h>
 
 #include "MockAuthDelegate.h"
 #include "MockHTTP2Connection.h"
@@ -49,6 +49,7 @@ using namespace avsCommon::avs;
 using namespace avsCommon::avs::attachment;
 using namespace avsCommon::sdkInterfaces;
 using namespace avsCommon::utils;
+using namespace avsCommon::utils::http;
 using namespace avsCommon::utils::http2;
 using namespace avsCommon::utils::http2::test;
 using namespace ::testing;
@@ -354,7 +355,7 @@ void HTTP2TransportTest::authorizeAndConnect() {
 /**
  * Test non-authorization on empty auth token.
  */
-TEST_F(HTTP2TransportTest, emptyAuthToken) {
+TEST_F(HTTP2TransportTest, testSlow_emptyAuthToken) {
     // Send an empty Auth token.
     m_mockAuthDelegate->setAuthToken("");
 
@@ -377,7 +378,7 @@ TEST_F(HTTP2TransportTest, emptyAuthToken) {
 /**
  * Test waiting for AuthDelegateInterface.
  */
-TEST_F(HTTP2TransportTest, waitAuthDelegateInterface) {
+TEST_F(HTTP2TransportTest, testSlow_waitAuthDelegateInterface) {
     setupHandlers(false, false);
 
     m_http2Transport->connect();
@@ -399,7 +400,7 @@ TEST_F(HTTP2TransportTest, waitAuthDelegateInterface) {
 /**
  * Test verifying the proper inclusion of bearer token in requests.
  */
-TEST_F(HTTP2TransportTest, bearerTokenInRequest) {
+TEST_F(HTTP2TransportTest, test_bearerTokenInRequest) {
     setupHandlers(false, false);
 
     m_mockHttp2Connection->setWaitRequestHeader(HTTP_AUTHORIZATION_HEADER_BEARER);
@@ -415,7 +416,7 @@ TEST_F(HTTP2TransportTest, bearerTokenInRequest) {
 /**
  * Test creation and triggering of post-connect object.
  */
-TEST_F(HTTP2TransportTest, triggerPostConnectObject) {
+TEST_F(HTTP2TransportTest, test_triggerPostConnectObject) {
     setupHandlers(false, false);
 
     // Don't expect TransportObserverInterface::onConnected() will be called.
@@ -441,7 +442,7 @@ TEST_F(HTTP2TransportTest, triggerPostConnectObject) {
 /**
  * Test delay of connection status until post-connect object created / notifies success.
  */
-TEST_F(HTTP2TransportTest, connectionStatusOnPostConnect) {
+TEST_F(HTTP2TransportTest, test_connectionStatusOnPostConnect) {
     setupHandlers(true, true);
 
     // Call connect().
@@ -465,7 +466,7 @@ TEST_F(HTTP2TransportTest, connectionStatusOnPostConnect) {
 /**
  * Test retry upon failed downchannel connection.
  */
-TEST_F(HTTP2TransportTest, retryOnDownchannelConnectionFailure) {
+TEST_F(HTTP2TransportTest, testSlow_retryOnDownchannelConnectionFailure) {
     setupHandlers(false, false);
 
     EXPECT_CALL(*m_mockTransportObserver, onConnected(_)).Times(0);
@@ -478,7 +479,7 @@ TEST_F(HTTP2TransportTest, retryOnDownchannelConnectionFailure) {
 
     // The Mock HTTP2Request replies to any downchannel request with a 500.
     ASSERT_TRUE(m_mockHttp2Connection->respondToDownchannelRequests(
-        static_cast<long>(SERVER_INTERNAL_ERROR), false, RESPONSE_TIMEOUT));
+        static_cast<long>(HTTPResponseCode::SERVER_ERROR_INTERNAL), false, RESPONSE_TIMEOUT));
 
     // Wait for a long time (up to 10 second), terminating the wait when the mock of HTTP2Connection receives a second
     // attempt to create a downchannel request.
@@ -488,7 +489,7 @@ TEST_F(HTTP2TransportTest, retryOnDownchannelConnectionFailure) {
 /**
  * Test sending of MessageRequest content.
  */
-TEST_F(HTTP2TransportTest, messageRequestContent) {
+TEST_F(HTTP2TransportTest, test_messageRequestContent) {
     setupHandlers(false, false);
 
     // Call connect().
@@ -525,7 +526,7 @@ TEST_F(HTTP2TransportTest, messageRequestContent) {
 /**
  * Test sending of MessageRequest with attachment data.
  */
-TEST_F(HTTP2TransportTest, messageRequestWithAttachment) {
+TEST_F(HTTP2TransportTest, test_messageRequestWithAttachment) {
     // Create an attachment reader.
     std::vector<char> attachment(TEST_ATTACHMENT_MESSAGE.begin(), TEST_ATTACHMENT_MESSAGE.end());
     std::shared_ptr<AttachmentReader> attachmentReader =
@@ -572,7 +573,7 @@ TEST_F(HTTP2TransportTest, messageRequestWithAttachment) {
 /**
  * Test pause of sending message when attachment buffer (SDS) empty but not closed.
  */
-TEST_F(HTTP2TransportTest, pauseSendWhenSDSEmpty) {
+TEST_F(HTTP2TransportTest, test_pauseSendWhenSDSEmpty) {
     setupHandlers(false, false);
 
     // Call connect().
@@ -638,7 +639,7 @@ TEST_F(HTTP2TransportTest, pauseSendWhenSDSEmpty) {
 /**
  * Test queuing MessageRequests until a response code has been received for any outstanding MessageRequest
  */
-TEST_F(HTTP2TransportTest, messageRequestsQueuing) {
+TEST_F(HTTP2TransportTest, testSlow_messageRequestsQueuing) {
     authorizeAndConnect();
 
     // Send 5 messages.
@@ -708,7 +709,7 @@ TEST_F(HTTP2TransportTest, messageRequestsQueuing) {
  * Test notification of onSendCompleted (check mapping of all cases and their mapping to
  * MessageRequestObserverInterface::Status).
  */
-TEST_F(HTTP2TransportTest, onSendCompletedNotification) {
+TEST_F(HTTP2TransportTest, test_onSendCompletedNotification) {
     // Contains the mapping of HTTPResponseCode, HTTP2ResponseFinishedStatus and the expected
     // MessageRequestObserverInterface::Status.
     const std::vector<std::tuple<long, HTTP2ResponseFinishedStatus, MessageRequestObserverInterface::Status>>
@@ -738,7 +739,7 @@ TEST_F(HTTP2TransportTest, onSendCompletedNotification) {
                 HTTP2ResponseFinishedStatus::TIMEOUT,
                 MessageRequestObserverInterface::Status::TIMEDOUT)},
             {std::make_tuple(
-                HTTPResponseCode::BAD_REQUEST,
+                HTTPResponseCode::CLIENT_ERROR_BAD_REQUEST,
                 static_cast<HTTP2ResponseFinishedStatus>(-1),
                 MessageRequestObserverInterface::Status::INTERNAL_ERROR)},
             {std::make_tuple(
@@ -762,15 +763,15 @@ TEST_F(HTTP2TransportTest, onSendCompletedNotification) {
                 HTTP2ResponseFinishedStatus::COMPLETE,
                 MessageRequestObserverInterface::Status::SERVER_OTHER_ERROR)},
             {std::make_tuple(
-                HTTPResponseCode::BAD_REQUEST,
+                HTTPResponseCode::CLIENT_ERROR_BAD_REQUEST,
                 HTTP2ResponseFinishedStatus::COMPLETE,
                 MessageRequestObserverInterface::Status::BAD_REQUEST)},
             {std::make_tuple(
-                HTTPResponseCode::FORBIDDEN,
+                HTTPResponseCode::CLIENT_ERROR_FORBIDDEN,
                 HTTP2ResponseFinishedStatus::COMPLETE,
                 MessageRequestObserverInterface::Status::INVALID_AUTH)},
             {std::make_tuple(
-                HTTPResponseCode::SERVER_INTERNAL_ERROR,
+                HTTPResponseCode::SERVER_ERROR_INTERNAL,
                 HTTP2ResponseFinishedStatus::COMPLETE,
                 MessageRequestObserverInterface::Status::SERVER_INTERNAL_ERROR_V2)},
             {std::make_tuple(
@@ -826,7 +827,7 @@ TEST_F(HTTP2TransportTest, onSendCompletedNotification) {
 /**
  * Test onExceptionReceived() notification for non 200 content.
  */
-TEST_F(HTTP2TransportTest, onExceptionReceivedNon200Content) {
+TEST_F(HTTP2TransportTest, test_onExceptionReceivedNon200Content) {
     authorizeAndConnect();
 
     // Send a message.
@@ -837,7 +838,7 @@ TEST_F(HTTP2TransportTest, onExceptionReceivedNon200Content) {
 
     auto request = m_mockHttp2Connection->waitForPostRequest(RESPONSE_TIMEOUT);
     ASSERT_NE(request, nullptr);
-    request->getSink()->onReceiveResponseCode(HTTPResponseCode::SERVER_INTERNAL_ERROR);
+    request->getSink()->onReceiveResponseCode(HTTPResponseCode::SERVER_ERROR_INTERNAL);
     request->getSink()->onReceiveData(NON_MIME_PAYLOAD.c_str(), NON_MIME_PAYLOAD.size());
     request->getSink()->onResponseFinished(HTTP2ResponseFinishedStatus::COMPLETE);
 
@@ -850,7 +851,7 @@ TEST_F(HTTP2TransportTest, onExceptionReceivedNon200Content) {
 /**
  * Test MessageConsumerInterface receipt of directives on Downchannel and Event streams.
  */
-TEST_F(HTTP2TransportTest, messageConsumerReceiveDirective) {
+TEST_F(HTTP2TransportTest, test_messageConsumerReceiveDirective) {
     PromiseFuturePair<void> messagesAreConsumed;
     unsigned int consumedMessageCount = 0;
     std::vector<std::string> messages;
@@ -896,7 +897,7 @@ TEST_F(HTTP2TransportTest, messageConsumerReceiveDirective) {
 /**
  * Test broadcast onServerSideDisconnect() upon closure of successfully opened downchannel.
  */
-TEST_F(HTTP2TransportTest, onServerSideDisconnectOnDownchannelClosure) {
+TEST_F(HTTP2TransportTest, test_onServerSideDisconnectOnDownchannelClosure) {
     authorizeAndConnect();
 
     // Send a message.
@@ -935,7 +936,7 @@ TEST_F(HTTP2TransportTest, onServerSideDisconnectOnDownchannelClosure) {
 /**
  * Test detection of MessageRequest timeout and trigger of ping request.
  */
-TEST_F(HTTP2TransportTest, messageRequestTimeoutPingRequest) {
+TEST_F(HTTP2TransportTest, test_messageRequestTimeoutPingRequest) {
     authorizeAndConnect();
 
     // Send a message.
@@ -955,7 +956,7 @@ TEST_F(HTTP2TransportTest, messageRequestTimeoutPingRequest) {
 /**
  * Test detection of network inactivity and trigger of ping request and continued ping for continued inactivity.
  */
-TEST_F(HTTP2TransportTest, networkInactivityPingRequest) {
+TEST_F(HTTP2TransportTest, testTimer_networkInactivityPingRequest) {
     // Short time to wait for inactivity before sending a ping.
     static const std::chrono::seconds testInactivityTimeout = SHORT_DELAY;
     // This test just checks that a second and third ping will be sen
@@ -1005,7 +1006,7 @@ TEST_F(HTTP2TransportTest, networkInactivityPingRequest) {
 /**
  * Test connection tear down for ping timeout.
  */
-TEST_F(HTTP2TransportTest, tearDownPingTimeout) {
+TEST_F(HTTP2TransportTest, testSlow_tearDownPingTimeout) {
     // Short time to wait for inactivity before sending a ping.
     const std::chrono::seconds testInactivityTimeout = SHORT_DELAY;
 
@@ -1047,7 +1048,7 @@ TEST_F(HTTP2TransportTest, tearDownPingTimeout) {
 /**
  * Test connection tear down for ping failure.
  */
-TEST_F(HTTP2TransportTest, tearDownPingFailure) {
+TEST_F(HTTP2TransportTest, testSlow_tearDownPingFailure) {
     // Short time to wait for inactivity before sending a ping.
     const std::chrono::seconds testInactivityTimeout = SHORT_DELAY;
 
@@ -1078,7 +1079,7 @@ TEST_F(HTTP2TransportTest, tearDownPingFailure) {
         auto pingRequest = m_mockHttp2Connection->waitForPingRequest(RESPONSE_TIMEOUT);
         ASSERT_TRUE(pingRequest);
         m_mockHttp2Connection->dequePingRequest();
-        pingRequest->getSink()->onReceiveResponseCode(HTTPResponseCode::BAD_REQUEST);
+        pingRequest->getSink()->onReceiveResponseCode(HTTPResponseCode::CLIENT_ERROR_BAD_REQUEST);
         pingRequest->getSink()->onResponseFinished(HTTP2ResponseFinishedStatus::COMPLETE);
     });
 
@@ -1090,7 +1091,7 @@ TEST_F(HTTP2TransportTest, tearDownPingFailure) {
 /**
  * Test limiting use of AVS streams to 10.
  */
-TEST_F(HTTP2TransportTest, avsStreamsLimit) {
+TEST_F(HTTP2TransportTest, testSlow_avsStreamsLimit) {
     // Number of test messages to send for this test.  This number is much larger than MAX_POST_STREAMS
     // to assure that this test exercises the case where more requests are outstanding than are allowed
     // to be sent at one time, forcing HTTP2Transport to queue the requests until some requests complete.

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
  */
 
 #include <cctype>
+#include <limits>
 
 #include <AVSCommon/SDKInterfaces/SpeakerInterface.h>
 #include <AVSCommon/Utils/Logger/Logger.h>
@@ -47,25 +48,40 @@ static const char THUMBS_DOWN = '-';
 static const char SETTINGS = 'c';
 static const char SPEAKER_CONTROL = 'p';
 static const char FIRMWARE_VERSION = 'f';
-static const char ESP_CONTROL = 'e';
 static const char RESET = 'k';
 static const char REAUTHORIZE = 'z';
 #ifdef ENABLE_COMMS
 static const char COMMS_CONTROL = 'd';
 #endif
 
-enum class SettingsValues : char { LOCALE = '1' };
+#ifdef ENABLE_PCC
+static const char PHONE_CONTROL = 'a';
+#endif
 
-static const std::unordered_map<char, std::string> LOCALE_VALUES({{'1', "en-US"},
-                                                                  {'2', "en-GB"},
-                                                                  {'3', "de-DE"},
-                                                                  {'4', "en-IN"},
-                                                                  {'5', "en-CA"},
-                                                                  {'6', "ja-JP"},
-                                                                  {'7', "en-AU"},
-                                                                  {'8', "fr-FR"},
-                                                                  {'9', "it-IT"},
-                                                                  {'a', "es-ES"}});
+#ifdef ENABLE_MCC
+static const char MEETING_CONTROL = 'j';
+#endif
+
+static constexpr char ENABLE = 'E';
+static constexpr char DISABLE = 'D';
+
+enum class SettingsValues : char {
+    LOCALE = '1',
+    DO_NOT_DISTURB = '2',
+    WAKEWORD_CONFIRMATION = '3',
+    SPEECH_CONFIRMATION = '4',
+    TIME_ZONE = '5'
+};
+
+/// The index of the first option in displaying a list of options.
+static const unsigned OPTION_ENUM_START = 1;
+
+static const std::unordered_map<char, std::string> TZ_VALUES({{'1', "America/Vancouver"},
+                                                              {'2', "America/Edmonton"},
+                                                              {'3', "America/Winnipeg"},
+                                                              {'4', "America/Toronto"},
+                                                              {'5', "America/Halifax"},
+                                                              {'6', "America/St_Johns"}});
 
 static const std::unordered_map<char, SpeakerInterface::Type> SPEAKER_TYPES(
     {{'1', SpeakerInterface::Type::AVS_SPEAKER_VOLUME}, {'2', SpeakerInterface::Type::AVS_ALERTS_VOLUME}});
@@ -89,7 +105,8 @@ static const std::string TAG("UserInputManager");
 
 std::unique_ptr<UserInputManager> UserInputManager::create(
     std::shared_ptr<InteractionManager> interactionManager,
-    std::shared_ptr<ConsoleReader> consoleReader) {
+    std::shared_ptr<ConsoleReader> consoleReader,
+    std::shared_ptr<avsCommon::sdkInterfaces::LocaleAssetsManagerInterface> localeAssetsManager) {
     if (!interactionManager) {
         ACSDK_CRITICAL(LX("Invalid InteractionManager passed to UserInputManager"));
         return nullptr;
@@ -100,14 +117,22 @@ std::unique_ptr<UserInputManager> UserInputManager::create(
         return nullptr;
     }
 
-    return std::unique_ptr<UserInputManager>(new UserInputManager(interactionManager, consoleReader));
+    if (!localeAssetsManager) {
+        ACSDK_CRITICAL(LX("Invalid LocaleAssetsManager passed to UserInputManager"));
+        return nullptr;
+    }
+
+    return std::unique_ptr<UserInputManager>(
+        new UserInputManager(interactionManager, consoleReader, localeAssetsManager));
 }
 
 UserInputManager::UserInputManager(
     std::shared_ptr<InteractionManager> interactionManager,
-    std::shared_ptr<ConsoleReader> consoleReader) :
+    std::shared_ptr<ConsoleReader> consoleReader,
+    std::shared_ptr<avsCommon::sdkInterfaces::LocaleAssetsManagerInterface> localeAssetsManager) :
         m_interactionManager{interactionManager},
         m_consoleReader{consoleReader},
+        m_localeAssetsManager{localeAssetsManager},
         m_limitedInteraction{false},
         m_restart{false} {
 }
@@ -144,6 +169,16 @@ SampleAppReturnCode UserInputManager::run() {
             m_interactionManager->stopForegroundActivity();
         } else if (x == SPEAKER_CONTROL) {
             controlSpeaker();
+#ifdef ENABLE_PCC
+        } else if (x == PHONE_CONTROL) {
+            controlPhone();
+#endif
+#ifdef ENABLE_MCC
+        } else if (x == MEETING_CONTROL) {
+            controlMeeting();
+#endif
+        } else if (x == SETTINGS) {
+            settingsMenu();
         } else if (x == INFO) {
             if (m_limitedInteraction) {
                 m_interactionManager->limitedHelp();
@@ -179,26 +214,6 @@ SampleAppReturnCode UserInputManager::run() {
             m_interactionManager->playbackThumbsUp();
         } else if (x == THUMBS_DOWN) {
             m_interactionManager->playbackThumbsDown();
-        } else if (x == SETTINGS) {
-            m_interactionManager->settings();
-            char y;
-            std::cin >> y;
-            // Check the Setting which has to be changed.
-            switch (y) {
-                case (char)SettingsValues::LOCALE: {
-                    char localeValue;
-                    m_interactionManager->locale();
-                    std::cin >> localeValue;
-                    auto searchLocale = LOCALE_VALUES.find(localeValue);
-                    if (searchLocale != LOCALE_VALUES.end()) {
-                        m_interactionManager->changeSetting("locale", searchLocale->second);
-                    } else {
-                        m_interactionManager->errorValue();
-                    }
-                    break;
-                }
-                    m_interactionManager->help();
-            }
         } else if (x == FIRMWARE_VERSION) {
             std::string text;
             std::getline(std::cin, text);
@@ -214,38 +229,6 @@ SampleAppReturnCode UserInputManager::run() {
                 m_interactionManager->setFirmwareVersion(static_cast<FirmwareVersion>(version));
             } else {
                 m_interactionManager->errorValue();
-            }
-        } else if (x == ESP_CONTROL) {
-            m_interactionManager->espControl();
-            char espChoice;
-            std::string tempString;
-            bool continueWhileLoop = true;
-            while (continueWhileLoop) {
-                std::cin >> espChoice;
-                switch (espChoice) {
-                    case '1':
-                        m_interactionManager->toggleESPSupport();
-                        m_interactionManager->espControl();
-                        break;
-                    case '2':
-                        std::cin >> tempString;
-                        m_interactionManager->setESPVoiceEnergy(tempString);
-                        m_interactionManager->espControl();
-                        break;
-                    case '3':
-                        std::cin >> tempString;
-                        m_interactionManager->setESPAmbientEnergy(tempString);
-                        m_interactionManager->espControl();
-                        break;
-                    case 'q':
-                        m_interactionManager->help();
-                        continueWhileLoop = false;
-                        break;
-                    default:
-                        m_interactionManager->errorValue();
-                        m_interactionManager->espControl();
-                        break;
-                }
             }
 #ifdef ENABLE_COMMS
         } else if (x == COMMS_CONTROL) {
@@ -333,6 +316,121 @@ void UserInputManager::controlSpeaker() {
     }
 }
 
+#ifdef ENABLE_PCC
+void UserInputManager::controlPhone() {
+    std::string callerId;
+
+    m_interactionManager->callId();
+    std::string callId;
+    std::cin >> callId;
+    m_interactionManager->phoneControl();
+    char phoneChoice;
+    std::cin >> phoneChoice;
+    switch (phoneChoice) {
+        case '1':
+            m_interactionManager->sendCallActivated(callId);
+            break;
+        case '2':
+            m_interactionManager->sendCallTerminated(callId);
+            break;
+        case '3':
+            m_interactionManager->sendCallFailed(callId);
+            break;
+        case '4':
+            m_interactionManager->callerId();
+            std::cin >> callerId;
+            m_interactionManager->sendCallReceived(callId, callerId);
+            break;
+        case '5':
+            m_interactionManager->callerId();
+            std::cin >> callerId;
+            m_interactionManager->sendCallerIdReceived(callId, callerId);
+            break;
+        case '6':
+            m_interactionManager->sendInboundRingingStarted(callId);
+            break;
+        case '7':
+            m_interactionManager->sendOutboundCallRequested(callId);
+            break;
+        case '8':
+            m_interactionManager->sendOutboundRingingStarted(callId);
+            break;
+        case '9':
+            m_interactionManager->sendSendDtmfSucceeded(callId);
+            break;
+        case '0':
+            m_interactionManager->sendSendDtmfFailed(callId);
+            break;
+        case 'q':
+            m_interactionManager->help();
+            break;
+        case 'i':
+            m_interactionManager->phoneControl();
+            break;
+        default:
+            m_interactionManager->errorValue();
+            break;
+    }
+}
+
+#endif
+
+#ifdef ENABLE_MCC
+void UserInputManager::controlMeeting() {
+    std::string sessionId;
+    std::string calendarItemsFile;
+
+    m_interactionManager->meetingControl();
+    char meetingChoice;
+    std::cin >> meetingChoice;
+    switch (meetingChoice) {
+        case '1':
+            m_interactionManager->sessionId();
+            std::cin >> sessionId;
+            m_interactionManager->sendMeetingJoined(sessionId);
+            break;
+        case '2':
+            m_interactionManager->sessionId();
+            std::cin >> sessionId;
+            m_interactionManager->sendMeetingEnded(sessionId);
+            break;
+        case '3':
+            m_interactionManager->calendarItemsFile();
+            std::cin >> calendarItemsFile;
+            m_interactionManager->sendCalendarItemsRetrieved(calendarItemsFile);
+            break;
+        case '4':
+            m_interactionManager->sessionId();
+            std::cin >> sessionId;
+            m_interactionManager->sendSetCurrentMeetingSession(sessionId);
+            break;
+        case '5':
+            m_interactionManager->sendClearCurrentMeetingSession();
+            break;
+        case '6':
+            m_interactionManager->sendConferenceConfigurationChanged();
+            break;
+        case '7':
+            m_interactionManager->sessionId();
+            std::cin >> sessionId;
+            m_interactionManager->sendMeetingClientErrorOccured(sessionId);
+            break;
+        case '8':
+            m_interactionManager->sendCalendarClientErrorOccured();
+            break;
+        case 'q':
+            m_interactionManager->help();
+            break;
+        case 'i':
+            m_interactionManager->meetingControl();
+            break;
+        default:
+            m_interactionManager->errorValue();
+            break;
+    }
+}
+#endif
+
 bool UserInputManager::confirmReset() {
     m_interactionManager->confirmResetDevice();
     char y;
@@ -379,6 +477,89 @@ bool UserInputManager::confirmReauthorizeDevice() {
     } while (true);
 
     return false;
+}
+
+void boolSettingMenu(std::function<void(bool)> setFunction) {
+    char y;
+    std::cin >> y;
+    switch (y) {
+        case ENABLE:
+            setFunction(true);
+            return;
+        case DISABLE:
+            setFunction(false);
+            return;
+    }
+}
+
+void UserInputManager::settingsMenu() {
+    m_interactionManager->settings();
+    char y;
+    std::cin >> y;
+    // Check the Setting which has to be changed.
+    switch (y) {
+        case (char)SettingsValues::LOCALE: {
+            unsigned int optionSelected;
+            m_interactionManager->locale();
+            std::cin >> optionSelected;
+            auto numOfSupportedLocales = m_localeAssetsManager->getSupportedLocales().size();
+            auto numOfSupportedLocaleCombinations = m_localeAssetsManager->getSupportedLocaleCombinations().size();
+            if (optionSelected <= numOfSupportedLocales && optionSelected >= OPTION_ENUM_START) {
+                std::string locale = *std::next(
+                    m_localeAssetsManager->getSupportedLocales().begin(), optionSelected - OPTION_ENUM_START);
+                m_interactionManager->setLocale({locale});
+            } else if (
+                optionSelected > numOfSupportedLocales &&
+                optionSelected <= (numOfSupportedLocales + numOfSupportedLocaleCombinations)) {
+                auto index = optionSelected - numOfSupportedLocales - OPTION_ENUM_START;
+                auto locales = *std::next(m_localeAssetsManager->getSupportedLocaleCombinations().begin(), index);
+                m_interactionManager->setLocale(locales);
+            } else {
+                m_interactionManager->errorValue();
+            }
+            // Clear error flag on cin (so that future I/O operations will work correctly) in case of incorrect input.
+            std::cin.clear();
+            // Ignore anything else on the same line as the non-number so that it does not cause another parse failure.
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            return;
+        }
+        case (char)SettingsValues::DO_NOT_DISTURB: {
+            m_interactionManager->doNotDisturb();
+            boolSettingMenu([this](bool enable) { m_interactionManager->setDoNotDisturbMode(enable); });
+            return;
+        }
+        case (char)SettingsValues::WAKEWORD_CONFIRMATION: {
+            m_interactionManager->wakewordConfirmation();
+            boolSettingMenu([this](bool enable) {
+                m_interactionManager->setWakewordConfirmation(
+                    enable ? settings::WakeWordConfirmationSettingType::TONE
+                           : settings::WakeWordConfirmationSettingType::NONE);
+            });
+            return;
+        }
+        case (char)SettingsValues::SPEECH_CONFIRMATION: {
+            m_interactionManager->speechConfirmation();
+            boolSettingMenu([this](bool enable) {
+                m_interactionManager->setSpeechConfirmation(
+                    enable ? settings::SpeechConfirmationSettingType::TONE
+                           : settings::SpeechConfirmationSettingType::NONE);
+            });
+            return;
+        }
+        case (char)SettingsValues::TIME_ZONE: {
+            m_interactionManager->timeZone();
+            char tzValue;
+            std::cin >> tzValue;
+            auto searchTz = TZ_VALUES.find(tzValue);
+            if (searchTz != TZ_VALUES.end()) {
+                m_interactionManager->setTimeZone(searchTz->second);
+            } else {
+                m_interactionManager->errorValue();
+            }
+            return;
+        }
+    }
+    m_interactionManager->help();
 }
 
 }  // namespace sampleApp

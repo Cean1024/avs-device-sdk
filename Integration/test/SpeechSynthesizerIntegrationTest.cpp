@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * Copyright 2017-2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License").
  * You may not use this file except in compliance with the License.
@@ -310,9 +310,10 @@ protected:
         m_dialogUXStateAggregator = std::make_shared<avsCommon::avs::DialogUXStateAggregator>();
 
         DirectiveHandlerConfiguration config;
-        config[SET_MUTE_PAIR] = BlockingPolicy::BLOCKING;
-        config[ADJUST_VOLUME_PAIR] = BlockingPolicy::BLOCKING;
-        config[EXPECT_SPEECH_PAIR] = BlockingPolicy::BLOCKING;
+        auto audioBlockingPolicy = BlockingPolicy(BlockingPolicy::MEDIUM_AUDIO, true);
+        config[SET_MUTE_PAIR] = audioBlockingPolicy;
+        config[ADJUST_VOLUME_PAIR] = audioBlockingPolicy;
+        config[EXPECT_SPEECH_PAIR] = audioBlockingPolicy;
         m_directiveHandler = std::make_shared<TestDirectiveHandler>(config);
 
         m_directiveSequencer = DirectiveSequencer::create(m_exceptionEncounteredSender);
@@ -328,8 +329,7 @@ protected:
 
         m_focusManager = std::make_shared<FocusManager>(FocusManager::getDefaultAudioChannels());
         m_testClient = std::make_shared<TestClient>();
-        ASSERT_TRUE(
-            m_focusManager->acquireChannel(FocusManager::ALERTS_CHANNEL_NAME, m_testClient, ALERTS_ACTIVITY_ID));
+        ASSERT_TRUE(m_focusManager->acquireChannel(FocusManager::ALERT_CHANNEL_NAME, m_testClient, ALERTS_ACTIVITY_ID));
         ASSERT_EQ(m_testClient->waitForFocusChange(WAIT_FOR_TIMEOUT_DURATION), FocusState::FOREGROUND);
 
 #ifdef GSTREAMER_MEDIA_PLAYER
@@ -532,7 +532,7 @@ protected:
  * then return to a finished state.
  *
  */
-TEST_F(SpeechSynthesizerTest, handleOneSpeech) {
+TEST_F(SpeechSynthesizerTest, test_handleOneSpeech) {
     // SpeechSynthesizerObserverInterface defaults to a FINISHED state.
     ASSERT_EQ(
         m_speechSynthesizerObserver->waitForNext(WAIT_FOR_TIMEOUT_DURATION),
@@ -596,7 +596,7 @@ TEST_F(SpeechSynthesizerTest, handleOneSpeech) {
  * done by sending a Recognize event to AVS with audio of "What's up?" which returns four sets of SetMute and Speak.
  *
  */
-TEST_F(SpeechSynthesizerTest, handleMultipleConsecutiveSpeaks) {
+TEST_F(SpeechSynthesizerTest, DISABLED_test_handleMultipleConsecutiveSpeaks) {
     // SpeechSynthesizerObserverInterface defaults to a FINISHED state.
     ASSERT_EQ(
         m_speechSynthesizerObserver->waitForNext(WAIT_FOR_TIMEOUT_DURATION),
@@ -663,7 +663,7 @@ TEST_F(SpeechSynthesizerTest, handleMultipleConsecutiveSpeaks) {
  * all directives are cancelled.
  *
  */
-TEST_F(SpeechSynthesizerTest, bargeInOnOneSpeech) {
+TEST_F(SpeechSynthesizerTest, test_bargeInOnOneSpeech) {
     // SpeechSynthesizerObserverInterface defaults to a FINISHED state.
     ASSERT_EQ(
         m_speechSynthesizerObserver->waitForNext(WAIT_FOR_TIMEOUT_DURATION),
@@ -731,7 +731,7 @@ TEST_F(SpeechSynthesizerTest, bargeInOnOneSpeech) {
  * Once the first Speak reaches the SpeechSynthesizer, the dialogRequestID is changed and all directives are cancelled.
  *
  */
-TEST_F(SpeechSynthesizerTest, bargeInOnMultipleSpeaksAtTheBeginning) {
+TEST_F(SpeechSynthesizerTest, test_bargeInOnMultipleSpeaksAtTheBeginning) {
     // SpeechSynthesizerObserverInterface defaults to a FINISHED state.
     ASSERT_EQ(
         m_speechSynthesizerObserver->waitForNext(WAIT_FOR_TIMEOUT_DURATION),
@@ -799,7 +799,7 @@ TEST_F(SpeechSynthesizerTest, bargeInOnMultipleSpeaksAtTheBeginning) {
  * While the Speak directives are being handled, the dialogRequestID is changed and all directives are cancelled.
  *
  */
-TEST_F(SpeechSynthesizerTest, bargeInOnMultipleSpeaksInTheMiddle) {
+TEST_F(SpeechSynthesizerTest, test_bargeInOnMultipleSpeaksInTheMiddle) {
     // SpeechSynthesizerObserverInterface defaults to a FINISHED state.
     ASSERT_EQ(
         m_speechSynthesizerObserver->waitForNext(WAIT_FOR_TIMEOUT_DURATION),
@@ -905,7 +905,7 @@ TEST_F(SpeechSynthesizerTest, bargeInOnMultipleSpeaksInTheMiddle) {
  * then return to a finished state. Another recognize event is then sent to AVS is response to the ExpectSpeech
  * directive which prompts another Speak directive to be handled.
  */
-TEST_F(SpeechSynthesizerTest, multiturnScenario) {
+TEST_F(SpeechSynthesizerTest, test_multiturnScenario) {
     // SpeechSynthesizerObserverInterface defaults to a FINISHED state.
     ASSERT_EQ(
         m_speechSynthesizerObserver->waitForNext(WAIT_FOR_TIMEOUT_DURATION),
@@ -1032,7 +1032,7 @@ TEST_F(SpeechSynthesizerTest, multiturnScenario) {
  * This test is intended to test the SpeechSynthesizer's ability to do nothing when there are no Speak directives. A
  * Recognize event with audio of "Volume up" is sent to AVS to prompt a AdjustVolume directive but no Speak directives.
  */
-TEST_F(SpeechSynthesizerTest, handleNoSpeakDirectives) {
+TEST_F(SpeechSynthesizerTest, DISABLED_test_handleNoSpeakDirectives) {
     // SpeechSynthesizerObserverInterface defaults to a FINISHED state.
     ASSERT_EQ(
         m_speechSynthesizerObserver->waitForNext(WAIT_FOR_TIMEOUT_DURATION),
@@ -1091,7 +1091,7 @@ TEST_F(SpeechSynthesizerTest, handleNoSpeakDirectives) {
  * This test is intended to test the SpeechSynthesizer's ability to do nothing when there are no Speak directives. No
  * Recognize events are sent to trigger any directives.
  */
-TEST_F(SpeechSynthesizerTest, handleNoDirectives) {
+TEST_F(SpeechSynthesizerTest, test_handleNoDirectives) {
     // SpeechSynthesizerObserverInterface defaults to a FINISHED state.
     ASSERT_EQ(
         m_speechSynthesizerObserver->waitForNext(WAIT_FOR_TIMEOUT_DURATION),
